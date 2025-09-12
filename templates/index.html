@@ -235,9 +235,6 @@
                     
                     <!-- Botones principales -->
                     <div class="d-grid gap-2 mb-3">
-                        <button class="btn btn-custom" onclick="showCreateSucursalModal()">
-                            <i class="fas fa-plus me-2"></i>Nueva Sucursal
-                        </button>
                         <button class="btn btn-success-custom" onclick="startDrawingZone()" id="btnDrawZone">
                             <i class="fas fa-draw-polygon me-2"></i>Dibujar Zona
                         </button>
@@ -295,43 +292,6 @@
         </div>
     </div>
     
-    <!-- Modal Nueva Sucursal -->
-    <div class="modal fade" id="modalSucursal" tabindex="-1">
-        <div class="modal-dialog">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title"><i class="fas fa-store me-2"></i>Nueva Sucursal</h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body">
-                    <form id="formSucursal">
-                        <div class="mb-3">
-                            <label class="form-label">Nombre de la Sucursal</label>
-                            <input type="text" class="form-control" id="nombreSucursal" required>
-                        </div>
-                        <div class="mb-3">
-                            <label class="form-label">Dirección</label>
-                            <input type="text" class="form-control" id="direccionSucursal" required>
-                        </div>
-                        <div class="row">
-                            <div class="col-6">
-                                <label class="form-label">Latitud</label>
-                                <input type="number" class="form-control" id="latitudSucursal" step="any" required>
-                            </div>
-                            <div class="col-6">
-                                <label class="form-label">Longitud</label>
-                                <input type="number" class="form-control" id="longitudSucursal" step="any" required>
-                            </div>
-                        </div>
-                    </form>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
-                    <button type="button" class="btn btn-custom" onclick="saveSucursal()">Guardar Sucursal</button>
-                </div>
-            </div>
-        </div>
-    </div>
     
     <!-- Modal Nueva Zona -->
     <div class="modal fade" id="modalZona" tabindex="-1">

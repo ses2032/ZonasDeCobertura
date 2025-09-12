@@ -676,56 +676,6 @@ async function saveZona() {
     }
 }
 
-// Mostrar modal de nueva sucursal
-function showCreateSucursalModal() {
-    document.getElementById('formSucursal').reset();
-    const modal = new bootstrap.Modal(document.getElementById('modalSucursal'));
-    modal.show();
-}
-
-// Guardar sucursal
-async function saveSucursal() {
-    const nombre = document.getElementById('nombreSucursal').value;
-    const direccion = document.getElementById('direccionSucursal').value;
-    const latitud = parseFloat(document.getElementById('latitudSucursal').value);
-    const longitud = parseFloat(document.getElementById('longitudSucursal').value);
-    
-    if (!nombre || !direccion || isNaN(latitud) || isNaN(longitud)) {
-        showAlert('Por favor complete todos los campos correctamente', 'warning');
-        return;
-    }
-    
-    try {
-        const response = await fetch('/api/sucursales', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                nombre: nombre,
-                direccion: direccion,
-                latitud: latitud,
-                longitud: longitud
-            })
-        });
-        
-        if (response.ok) {
-            showAlert('Sucursal creada exitosamente', 'success');
-            bootstrap.Modal.getInstance(document.getElementById('modalSucursal')).hide();
-            
-            // Limpiar formulario
-            document.getElementById('formSucursal').reset();
-            
-            // Recargar sucursales
-            loadSucursales();
-        } else {
-            throw new Error('Error al crear sucursal');
-        }
-    } catch (error) {
-        console.error('Error guardando sucursal:', error);
-        showAlert('Error al guardar la sucursal', 'danger');
-    }
-}
 
 // Consultar dirección
 async function consultarDireccion() {
