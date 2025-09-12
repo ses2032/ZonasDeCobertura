@@ -466,95 +466,6 @@ def consultar_cobertura():
         # Si hay algún error durante el proceso, devolverlo
         return jsonify({'error': str(e)}), 500
 
-# =============================================================================
-# RUTAS DE LA API - GESTIÓN DE CALLES
-# =============================================================================
-
-@app.route('/api/obtener-calles-zona', methods=['POST'])
-def obtener_calles_zona():
-    """
-    Obtiene las calles y rangos de altura para una zona de cobertura específica.
-    
-    Esta ruta consulta la base de datos para obtener todas las calles
-    que están asociadas a una zona de cobertura, incluyendo los rangos
-    de altura (desde-hasta) para cada calle.
-    
-    Returns:
-        JSON: Lista de calles con sus rangos de altura
-        En caso de error: JSON con mensaje de error y código 400
-    """
-    # Obtener los datos JSON de la petición
-    data = request.get_json()
-    zona_id = data.get('zona_id')
-    
-    # Validar que se haya proporcionado un ID de zona
-    if not zona_id:
-        return jsonify({'error': 'ID de zona requerido'}), 400
-    
-    # Conectar a la base de datos
-    conn = get_db_connection()
-    
-    # Consultar todas las calles asociadas a la zona especificada
-    calles = conn.execute('''
-        SELECT * FROM calles_cobertura WHERE zona_id = ?
-    ''', (zona_id,)).fetchall()
-    
-    # Cerrar la conexión
-    conn.close()
-    
-    # Convertir las filas a diccionarios y devolver como JSON
-    return jsonify([dict(calle) for calle in calles])
-
-@app.route('/api/guardar-calles-zona', methods=['POST'])
-def guardar_calles_zona():
-    """
-    Guarda las calles y rangos de altura para una zona de cobertura.
-    
-    Esta ruta recibe una lista de calles con sus rangos de altura y las
-    guarda en la base de datos. Primero elimina las calles existentes
-    para la zona y luego inserta las nuevas.
-    
-    Returns:
-        JSON: Mensaje de confirmación del guardado
-        En caso de error: JSON con mensaje de error y código 400
-    """
-    # Obtener los datos JSON de la petición
-    data = request.get_json()
-    zona_id = data.get('zona_id')
-    calles = data.get('calles', [])  # Lista de calles, por defecto lista vacía
-    
-    # Validar que se haya proporcionado un ID de zona
-    if not zona_id:
-        return jsonify({'error': 'ID de zona requerido'}), 400
-    
-    # Conectar a la base de datos
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    # =====================================================================
-    # PASO 1: ELIMINAR CALLES EXISTENTES
-    # =====================================================================
-    # Eliminar todas las calles existentes para esta zona
-    # Esto permite reemplazar completamente la lista de calles
-    cursor.execute('DELETE FROM calles_cobertura WHERE zona_id = ?', (zona_id,))
-    
-    # =====================================================================
-    # PASO 2: INSERTAR NUEVAS CALLES
-    # =====================================================================
-    # Recorrer la lista de calles y insertar cada una
-    for calle in calles:
-        cursor.execute('''
-            INSERT INTO calles_cobertura (zona_id, nombre_calle, altura_desde, altura_hasta)
-            VALUES (?, ?, ?, ?)
-        ''', (zona_id, calle['nombre_calle'], calle['altura_desde'], calle['altura_hasta']))
-    
-    # Confirmar todos los cambios en la base de datos
-    conn.commit()
-    # Cerrar la conexión
-    conn.close()
-    
-    # Devolver mensaje de confirmación
-    return jsonify({'message': 'Calles guardadas exitosamente'})
 
 # =============================================================================
 # RUTAS DE LA API - GUARDADO EN API EXTERNA
@@ -607,6 +518,56 @@ def guardar_zona():
         logger.error(f"Error al guardar zona de cobertura: {str(e)}")
         # Devolver error HTTP 500
         return jsonify({'error': 'Error al guardar zona de cobertura en la API externa'}), 500
+
+@app.route('/api/eliminar-zona', methods=['DELETE'])
+def eliminar_zona():
+    """
+    Elimina una zona de cobertura de la API externa.
+    
+    Esta ruta recibe el ID de sucursal y el nombre de la zona a eliminar,
+    y hace una petición DELETE a la API externa para eliminarla.
+    
+    Returns:
+        JSON: Mensaje de confirmación y datos de respuesta de la API externa
+        En caso de error: JSON con mensaje de error y código correspondiente
+    """
+    try:
+        # Obtener los datos JSON de la petición
+        data = request.get_json()
+        
+        # =====================================================================
+        # VALIDACIÓN DE DATOS REQUERIDOS
+        # =====================================================================
+        # Lista de campos que deben estar presentes en la petición
+        required_fields = ['sucursal_id', 'nombre_zona']
+        
+        # Verificar que todos los campos requeridos estén presentes
+        for field in required_fields:
+            if field not in data:
+                return jsonify({'error': f'Campo requerido: {field}'}), 400
+        
+        # =====================================================================
+        # ELIMINACIÓN EN API EXTERNA
+        # =====================================================================
+        # Obtener el servicio de API externa
+        api_service = get_api_service()
+        # Enviar la petición de eliminación a la API externa
+        response = api_service.delete_coverage_zone(
+            sucursal_id=data['sucursal_id'],
+            nombre_zona=data['nombre_zona']
+        )
+        
+        # Devolver respuesta exitosa con los datos de la API externa
+        return jsonify({
+            'message': 'Zona de cobertura eliminada exitosamente',
+            'data': response
+        })
+        
+    except Exception as e:
+        # Registrar el error en el log
+        logger.error(f"Error al eliminar zona de cobertura: {str(e)}")
+        # Devolver error HTTP 500
+        return jsonify({'error': 'Error al eliminar zona de cobertura en la API externa'}), 500
 
 # =============================================================================
 # INICIALIZACIÓN DE LA APLICACIÓN

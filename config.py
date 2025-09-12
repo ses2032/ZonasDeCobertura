@@ -120,6 +120,9 @@ class Config:
     
     # Endpoint para guardar nuevas zonas de cobertura
     GUARDAR_ZONA_ENDPOINT = '/internalapi/GuardarZonaCobertura'
+    
+    # Endpoint para eliminar zonas de cobertura
+    ELIMINAR_ZONA_ENDPOINT = '/internalapi/EliminarZonaCobertura'
 
 # =============================================================================
 # CONFIGURACIONES ESPECÍFICAS POR ENTORNO

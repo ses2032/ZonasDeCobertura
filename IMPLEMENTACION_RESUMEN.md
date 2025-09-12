@@ -104,21 +104,35 @@ El sistema mantiene compatibilidad con:
 - Funcionalidades existentes del frontend
 - Sistema de consulta de direcciones
 
+## Funcionalidades Implementadas
+
+### ✅ Completadas
+1. **Integración con API externa** para obtener sucursales y zonas
+2. **Guardado de zonas** en la API externa
+3. **Eliminación de zonas** en la API externa
+4. **Manejo de errores** y logging detallado
+5. **Documentación completa** de la API
+
+### 🔄 En Progreso
+- Pruebas de integración completa
+
 ## Próximos Pasos
 
 1. **Implementar los endpoints en .NET Core** siguiendo la documentación proporcionada
 2. **Configurar las variables de entorno** en el servidor de producción
 3. **Probar la integración** con la API externa
 4. **Migrar datos existentes** si es necesario
+5. **Ejecutar pruebas** usando el script `test_eliminacion.py`
 
 ## Archivos Modificados
 
-- `config.py` - Configuración de API externa
-- `app.py` - Endpoints actualizados
-- `api_service.py` - Nuevo servicio de API (creado)
-- `static/app.js` - Frontend actualizado
-- `API_DOCUMENTATION.md` - Documentación de API (creado)
-- `IMPLEMENTACION_RESUMEN.md` - Este resumen (creado)
+- `config.py` - Configuración de API externa (agregado endpoint de eliminación)
+- `app.py` - Endpoints actualizados (agregado endpoint DELETE /api/eliminar-zona)
+- `api_service.py` - Nuevo servicio de API (agregado método delete_coverage_zone)
+- `static/app.js` - Frontend actualizado (integración con eliminación en API externa)
+- `API_DOCUMENTATION.md` - Documentación de API (agregada documentación de eliminación)
+- `IMPLEMENTACION_RESUMEN.md` - Este resumen (actualizado)
+- `test_eliminacion.py` - Script de pruebas (creado)
 
 ## Conclusión
 

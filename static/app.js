@@ -7,6 +7,27 @@ let currentZona = null;
 let isDrawingMode = false;
 let sucursales = [];
 let zonas = [];
+let sucursalMarker = null;
+let hasUnsavedChanges = false;
+let originalZonas = [];
+
+// Función para normalizar coordenadas y asegurar consistencia
+function normalizeCoordinates(coords) {
+    if (!Array.isArray(coords)) {
+        return coords;
+    }
+    
+    return coords.map(coord => {
+        if (typeof coord === 'object' && coord !== null) {
+            // Normalizar a 6 decimales para mantener precisión pero evitar diferencias mínimas
+            return {
+                latitud: parseFloat(coord.latitud || coord.lat).toFixed(6),
+                longitud: parseFloat(coord.longitud || coord.lng).toFixed(6)
+            };
+        }
+        return coord;
+    });
+}
 
 // Inicialización del mapa
 function initMap() {
@@ -60,15 +81,99 @@ function initMap() {
         
         if (isDrawingMode) {
             showZonaModal(layer);
+        } else {
+            // Si se crea un polígono fuera del modo dibujo, agregarlo como zona temporal
+            if (currentSucursal) {
+                const coordenadasRaw = layer.getLatLngs()[0].map(latlng => ({
+                    latitud: latlng.lat,
+                    longitud: latlng.lng
+                }));
+                
+                const coordenadas = normalizeCoordinates(coordenadasRaw);
+                
+                console.log('=== COORDENADAS ZONA TEMPORAL ===');
+                console.log('Coordenadas originales:', coordenadasRaw);
+                console.log('Coordenadas normalizadas:', coordenadas);
+                console.log('Primera coordenada:', coordenadas[0]);
+                console.log('Última coordenada:', coordenadas[coordenadas.length - 1]);
+                
+                const zonaTemporal = {
+                    id: null, // Zona temporal sin ID
+                    sucursal_id: currentSucursal.id,
+                    nombre_zona: `Zona temporal ${Date.now()}`, // Nombre temporal
+                    poligono_coordenadas: coordenadas,
+                    activa: true,
+                    sucursal_nombre: currentSucursal.nombre,
+                    temporal: true // Marcar como temporal
+                };
+                
+                // Agregar la zona temporal al array local
+                zonas.push(zonaTemporal);
+                
+                // Marcar que hay cambios sin guardar
+                markAsChanged(currentSucursal.id);
+                
+                // Actualizar la visualización
+                renderZonas();
+            }
         }
     });
     
     map.on(L.Draw.Event.EDITED, function(event) {
         console.log('Polígono editado');
+        // Actualizar las coordenadas en el array local cuando se edita un polígono
+        if (currentSucursal) {
+            const layers = event.layers;
+            let hasChanges = false;
+            
+            layers.eachLayer(function(layer) {
+                if (layer.options && layer.options.isZona && layer.options.zonaId) {
+                    // Encontrar la zona en el array local y actualizar sus coordenadas
+                    const zona = zonas.find(z => z.id === layer.options.zonaId);
+                    if (zona) {
+                        const coordenadasRaw = layer.getLatLngs()[0].map(latlng => ({
+                            latitud: latlng.lat,
+                            longitud: latlng.lng
+                        }));
+                        
+                        const coordenadas = normalizeCoordinates(coordenadasRaw);
+                        
+                        console.log('=== COORDENADAS EXTRAÍDAS AL EDITAR ===');
+                        console.log('Zona editada:', zona.nombre_zona);
+                        console.log('Coordenadas originales:', coordenadasRaw);
+                        console.log('Coordenadas normalizadas:', coordenadas);
+                        console.log('Primera coordenada:', coordenadas[0]);
+                        console.log('Última coordenada:', coordenadas[coordenadas.length - 1]);
+                        
+                        // Verificar si las coordenadas realmente cambiaron
+                        const coordenadasAnteriores = zona.poligono_coordenadas;
+                        const coordenadasCambiaron = JSON.stringify(coordenadas) !== JSON.stringify(coordenadasAnteriores);
+                        
+                        if (coordenadasCambiaron) {
+                            console.log('Coordenadas de zona modificadas:', zona.nombre_zona);
+                            console.log('Coordenadas anteriores:', coordenadasAnteriores);
+                            console.log('Coordenadas nuevas:', coordenadas);
+                            
+                            zona.poligono_coordenadas = coordenadas;
+                            hasChanges = true;
+                        }
+                    }
+                }
+            });
+            
+            // Marcar que hay cambios sin guardar solo si realmente hubo cambios
+            if (hasChanges) {
+                markAsChanged(currentSucursal.id);
+            }
+        }
     });
     
     map.on(L.Draw.Event.DELETED, function(event) {
         console.log('Polígono eliminado');
+        // Marcar que hay cambios sin guardar cuando se elimina un polígono
+        if (currentSucursal) {
+            markAsChanged(currentSucursal.id);
+        }
     });
     
     // Cargar datos iniciales
@@ -102,11 +207,14 @@ function renderSucursales() {
             <h6>${sucursal.nombre}</h6>
             <small class="text-muted">${sucursal.direccion}</small>
             <div class="mt-2">
-                <button class="btn btn-sm btn-outline-primary" onclick="event.stopPropagation(); showSucursalOnMap(${sucursal.id})">
+                <button class="btn btn-sm btn-outline-primary" onclick="event.stopPropagation(); showSucursalOnMap(${sucursal.id})" title="Centrar en mapa">
                     <i class="fas fa-map-marker-alt"></i>
                 </button>
-                <button class="btn btn-sm btn-outline-success" onclick="event.stopPropagation(); createZoneForSucursal(${sucursal.id})">
+                <button class="btn btn-sm btn-outline-success" onclick="event.stopPropagation(); createZoneForSucursal(${sucursal.id})" title="Crear zona">
                     <i class="fas fa-plus"></i>
+                </button>
+                <button class="btn btn-save-changes" onclick="event.stopPropagation(); saveZonasChanges(${sucursal.id})" title="Guardar cambios" id="btnSaveChanges_${sucursal.id}">
+                    <i class="fas fa-save"></i>
                 </button>
             </div>
         </div>
@@ -129,35 +237,72 @@ async function loadZonas() {
 // Cargar zonas de cobertura para una sucursal específica
 async function loadZonasSucursal(sucursalId) {
     try {
+        // Mostrar indicador de carga
+        const listaZonas = document.getElementById('listaZonas');
+        listaZonas.innerHTML = `
+            <div class="loading">
+                <div class="spinner-border spinner-border-custom" role="status">
+                    <span class="visually-hidden">Cargando...</span>
+                </div>
+                <p class="mt-2">Cargando zonas de la sucursal...</p>
+            </div>
+        `;
+        
         const response = await fetch(`/api/zonas/${sucursalId}`);
         if (response.ok) {
             const zonasSucursal = await response.json();
+            console.log('Zonas cargadas de la API:', zonasSucursal);
+            
             // Actualizar la lista de zonas con las de la sucursal seleccionada
             zonas = zonasSucursal;
+            // Guardar el estado original para detectar cambios
+            originalZonas = JSON.parse(JSON.stringify(zonas));
+            hasUnsavedChanges = false;
+            updateSaveButtonVisibility(sucursalId);
             renderZonas();
             renderZonasOnMap();
+            
+            // Mostrar mensaje si no hay zonas
+            if (zonas.length === 0) {
+                showAlert('Esta sucursal no tiene zonas de cobertura definidas', 'info');
+            }
         } else {
             console.warn(`No se encontraron zonas para la sucursal ${sucursalId}`);
             zonas = [];
             renderZonas();
             renderZonasOnMap();
+            showAlert('No se encontraron zonas de cobertura para esta sucursal', 'warning');
         }
     } catch (error) {
         console.error('Error cargando zonas de sucursal:', error);
         showAlert('Error al cargar zonas de la sucursal', 'danger');
+        
+        // Mostrar mensaje de error en la lista
+        const listaZonas = document.getElementById('listaZonas');
+        listaZonas.innerHTML = `
+            <div class="alert alert-danger alert-custom">
+                <i class="fas fa-exclamation-triangle me-2"></i>
+                Error al cargar las zonas de cobertura
+            </div>
+        `;
     }
 }
 
 // Renderizar zonas en la lista
 function renderZonas() {
     const container = document.getElementById('listaZonas');
+    console.log('renderZonas llamado, zonas totales:', zonas.length);
     
-    if (zonas.length === 0) {
+    // Filtrar zonas que no están marcadas como eliminadas
+    const zonasVisibles = zonas.filter(zona => !zona.eliminada);
+    console.log('zonas visibles:', zonasVisibles.length);
+    
+    if (zonasVisibles.length === 0) {
         container.innerHTML = '<p class="text-muted">No hay zonas de cobertura</p>';
         return;
     }
     
-    container.innerHTML = zonas.map(zona => {
+    container.innerHTML = zonasVisibles.map(zona => {
         const zonaId = zona.id || zona.zonaId;
         const nombreZona = zona.nombre_zona || zona.nombreZona;
         const sucursalNombre = zona.sucursal_nombre || 
@@ -171,8 +316,8 @@ function renderZonas() {
                     <button class="btn btn-sm btn-outline-info" onclick="showZonaOnMap(${zonaId})">
                         <i class="fas fa-eye"></i>
                     </button>
-                    <button class="btn btn-sm btn-outline-warning" onclick="editZonaCalles(${zonaId})">
-                        <i class="fas fa-edit"></i>
+                    <button class="btn btn-sm btn-outline-danger" onclick="deleteZona(${zonaId})">
+                        <i class="fas fa-trash"></i>
                     </button>
                 </div>
             </div>
@@ -182,15 +327,18 @@ function renderZonas() {
 
 // Renderizar zonas en el mapa
 function renderZonasOnMap() {
-    // Limpiar zonas existentes
-    map.eachLayer(layer => {
-        if (layer.options && layer.options.isZona) {
-            map.removeLayer(layer);
-        }
-    });
+    console.log('renderZonasOnMap llamado, zonas totales:', zonas.length);
     
-    zonas.forEach(zona => {
+    // Limpiar zonas existentes
+    clearExistingPolygons();
+    
+    // Filtrar zonas que no están marcadas como eliminadas
+    const zonasVisibles = zonas.filter(zona => !zona.eliminada);
+    console.log('zonas visibles para renderizar en mapa:', zonasVisibles.length);
+    
+    zonasVisibles.forEach(zona => {
         try {
+            console.log('Renderizando zona:', zona);
             let coordenadas;
             
             // Manejar diferentes formatos de coordenadas
@@ -200,43 +348,84 @@ function renderZonasOnMap() {
                 coordenadas = zona.poligono_coordenadas;
             }
             
-            // Convertir coordenadas al formato esperado por Leaflet
-            const latLngs = coordenadas.map(coord => {
+            console.log('Coordenadas parseadas para zona:', zona.nombre_zona || zona.nombreZona, coordenadas);
+            
+            // Normalizar coordenadas recibidas de la API
+            const coordenadasNormalizadas = normalizeCoordinates(coordenadas);
+            console.log('Coordenadas normalizadas:', coordenadasNormalizadas);
+            
+            // Validar que las coordenadas existan
+            if (!coordenadas || !Array.isArray(coordenadas) || coordenadas.length < 3) {
+                console.warn('Zona con coordenadas inválidas:', zona);
+                return;
+            }
+            
+            console.log('Coordenadas válidas para zona:', zona.nombre_zona || zona.nombreZona);
+            
+            // Convertir coordenadas normalizadas al formato esperado por Leaflet
+            const latLngs = coordenadasNormalizadas.map(coord => {
                 if (Array.isArray(coord)) {
                     // Formato [lat, lng]
                     return [coord[0], coord[1]];
-                } else {
+                } else if (coord.latitud !== undefined && coord.longitud !== undefined) {
                     // Formato {latitud, longitud}
                     return [coord.latitud, coord.longitud];
+                } else if (coord.lat !== undefined && coord.lng !== undefined) {
+                    // Formato {lat, lng}
+                    return [coord.lat, coord.lng];
+                } else {
+                    console.error('Formato de coordenada no reconocido:', coord);
+                    return [0, 0]; // Coordenada por defecto en caso de error
                 }
             });
             
+            // Usar el mismo estilo que cuando se crean los polígonos
             const polygon = L.polygon(latLngs, {
-                color: '#28a745',
-                fillColor: '#28a745',
-                fillOpacity: 0.3,
+                color: '#667eea',           // Mismo color que en drawControl
+                fillColor: '#667eea',       // Mismo color de relleno
+                fillOpacity: 0.2,           // Misma opacidad
+                weight: 2,                  // Grosor del borde
                 isZona: true,
                 zonaId: zona.id || zona.zonaId
             }).addTo(map);
+            
+            console.log('Polígono agregado al mapa para zona:', zona.nombre_zona || zona.nombreZona);
             
             const sucursalNombre = zona.sucursal_nombre || 
                                  (currentSucursal ? currentSucursal.nombre : 'Sucursal');
             
             polygon.bindPopup(`
-                <strong>${zona.nombre_zona || zona.nombreZona}</strong><br>
-                Sucursal: ${sucursalNombre}<br>
-                <button class="btn btn-sm btn-primary mt-2" onclick="editZonaCalles(${zona.id || zona.zonaId})">
-                    Editar Calles
-                </button>
+                <div class="text-center">
+                    <strong>${zona.nombre_zona || zona.nombreZona}</strong><br>
+                    <small class="text-muted">Sucursal: ${sucursalNombre}</small><br>
+                    <button class="btn btn-sm btn-danger mt-2" onclick="deleteZona(${zona.id || zona.zonaId})">
+                        <i class="fas fa-trash me-1"></i>Eliminar Zona
+                    </button>
+                </div>
             `);
+            
+            // Agregar evento de click para mostrar información
+            polygon.on('click', function(e) {
+                console.log('Zona clickeada:', zona);
+            });
+            
         } catch (error) {
-            console.error('Error renderizando zona:', error);
+            console.error('Error renderizando zona:', error, zona);
         }
     });
+    
+    console.log('Renderizado de zonas en mapa completado');
+    
+    // Mostrar mensaje si se cargaron zonas
+    if (zonas.length > 0) {
+        showAlert(`Se cargaron ${zonas.length} zona(s) de cobertura`, 'success');
+    }
 }
 
 // Seleccionar sucursal
 function selectSucursal(sucursalId) {
+    console.log('selectSucursal llamado para sucursal:', sucursalId);
+    
     // Remover selección anterior
     document.querySelectorAll('.sucursal-item').forEach(item => {
         item.classList.remove('active');
@@ -247,9 +436,22 @@ function selectSucursal(sucursalId) {
     if (item) {
         item.classList.add('active');
         currentSucursal = sucursales.find(s => s.id === sucursalId);
+        console.log('Sucursal seleccionada:', currentSucursal);
+        
+        // Limpiar polígonos y marcadores existentes del mapa
+        clearExistingPolygons();
+        clearSucursalMarker();
+        
+        // Mostrar marcador de la sucursal seleccionada
+        showSucursalMarker(currentSucursal);
         
         // Cargar zonas específicas para esta sucursal
         loadZonasSucursal(sucursalId);
+        
+        // Centrar el mapa en la sucursal seleccionada
+        if (currentSucursal) {
+            map.setView([currentSucursal.latitud, currentSucursal.longitud], 13);
+        }
     }
 }
 
@@ -284,14 +486,26 @@ function showZonaOnMap(zonaId) {
                 coordenadas = zona.poligono_coordenadas;
             }
             
-            // Convertir coordenadas al formato esperado por Leaflet
-            const latLngs = coordenadas.map(coord => {
+            console.log('Coordenadas parseadas para mostrar zona:', zona.nombre_zona || zona.nombreZona, coordenadas);
+            
+            // Normalizar coordenadas recibidas de la API
+            const coordenadasNormalizadas = normalizeCoordinates(coordenadas);
+            console.log('Coordenadas normalizadas para mostrar:', coordenadasNormalizadas);
+            
+            // Convertir coordenadas normalizadas al formato esperado por Leaflet
+            const latLngs = coordenadasNormalizadas.map(coord => {
                 if (Array.isArray(coord)) {
                     // Formato [lat, lng]
                     return [coord[0], coord[1]];
-                } else {
+                } else if (coord.latitud !== undefined && coord.longitud !== undefined) {
                     // Formato {latitud, longitud}
                     return [coord.latitud, coord.longitud];
+                } else if (coord.lat !== undefined && coord.lng !== undefined) {
+                    // Formato {lat, lng}
+                    return [coord.lat, coord.lng];
+                } else {
+                    console.error('Formato de coordenada no reconocido:', coord);
+                    return [0, 0]; // Coordenada por defecto en caso de error
                 }
             });
             
@@ -305,12 +519,15 @@ function showZonaOnMap(zonaId) {
 
 // Crear zona para sucursal
 function createZoneForSucursal(sucursalId) {
+    console.log('createZoneForSucursal llamado para sucursal:', sucursalId);
     currentSucursal = sucursales.find(s => s.id === sucursalId);
     startDrawingZone();
 }
 
 // Iniciar modo de dibujo
 function startDrawingZone() {
+    console.log('startDrawingZone llamado, currentSucursal:', currentSucursal);
+    
     if (!currentSucursal) {
         showAlert('Por favor seleccione una sucursal primero', 'warning');
         return;
@@ -325,6 +542,7 @@ function startDrawingZone() {
 
 // Cancelar dibujo
 function cancelDrawing() {
+    console.log('cancelDrawing llamado');
     isDrawingMode = false;
     document.getElementById('btnDrawZone').innerHTML = '<i class="fas fa-draw-polygon me-2"></i>Dibujar Zona';
     document.getElementById('btnDrawZone').onclick = startDrawingZone;
@@ -335,6 +553,8 @@ function cancelDrawing() {
 
 // Mostrar modal de zona
 function showZonaModal(layer) {
+    console.log('showZonaModal llamado, isDrawingMode:', isDrawingMode);
+    
     if (!isDrawingMode) return;
     
     currentZona = layer;
@@ -359,8 +579,12 @@ function showZonaModal(layer) {
 
 // Guardar zona
 async function saveZona() {
+    console.log('saveZona llamado');
+    
     const sucursalId = document.getElementById('sucursalZona').value;
     const nombreZona = document.getElementById('nombreZona').value;
+    
+    console.log('sucursalId:', sucursalId, 'nombreZona:', nombreZona);
     
     if (!sucursalId || !nombreZona) {
         showAlert('Por favor complete todos los campos', 'warning');
@@ -373,10 +597,22 @@ async function saveZona() {
     }
     
     try {
-        const coordenadas = currentZona.getLatLngs()[0].map(latlng => ({
+        const coordenadasRaw = currentZona.getLatLngs()[0].map(latlng => ({
             latitud: latlng.lat,
             longitud: latlng.lng
         }));
+        
+        const coordenadas = normalizeCoordinates(coordenadasRaw);
+        
+        console.log('=== COORDENADAS EXTRAÍDAS DEL POLÍGONO ===');
+        console.log('Coordenadas originales:', coordenadasRaw);
+        console.log('Coordenadas normalizadas:', coordenadas);
+        console.log('Número de vértices:', coordenadas.length);
+        console.log('Primera coordenada:', coordenadas[0]);
+        console.log('Última coordenada:', coordenadas[coordenadas.length - 1]);
+        console.log('Tipo de primera coordenada:', typeof coordenadas[0]);
+        console.log('Latitud primera coordenada:', coordenadas[0].latitud);
+        console.log('Longitud primera coordenada:', coordenadas[0].longitud);
         
         const response = await fetch('/api/guardar-zona', {
             method: 'POST',
@@ -387,13 +623,16 @@ async function saveZona() {
                 sucursal_id: parseInt(sucursalId),
                 nombre_zona: nombreZona,
                 poligono_coordenadas: coordenadas,
-                activa: true,
-                calles: [] // Las calles se pueden agregar después
+                activa: true
             })
         });
         
+        console.log('Respuesta de la API:', response);
+        
         if (response.ok) {
             const result = await response.json();
+            console.log('Resultado de la API:', result);
+            
             showAlert('Zona creada exitosamente', 'success');
             bootstrap.Modal.getInstance(document.getElementById('modalZona')).hide();
             
@@ -401,12 +640,29 @@ async function saveZona() {
             document.getElementById('formZona').reset();
             drawnItems.clearLayers();
             
-            // Recargar zonas para la sucursal seleccionada
+            // Agregar la zona al array local
+            const nuevaZona = {
+                id: result.data?.zonaId || result.data?.id || null, // Usar el ID devuelto por la API
+                sucursal_id: parseInt(sucursalId),
+                nombre_zona: nombreZona,
+                poligono_coordenadas: coordenadas,
+                activa: true,
+                sucursal_nombre: currentSucursal ? currentSucursal.nombre : 'Sucursal'
+            };
+            
+            console.log('Nueva zona agregada al array local:', nuevaZona);
+            
+            // Agregar la zona al array local
+            zonas.push(nuevaZona);
+            
+            // Marcar que hay cambios sin guardar
             if (currentSucursal) {
-                loadZonasSucursal(currentSucursal.id);
-            } else {
-                loadZonas();
+                markAsChanged(currentSucursal.id);
             }
+            
+            // Actualizar la visualización
+            renderZonas();
+            renderZonasOnMap();
             
             // Salir del modo dibujo
             cancelDrawing();
@@ -570,171 +826,100 @@ function showDireccionOnMap(lat, lng) {
         .openPopup();
 }
 
-// Editar calles de zona
-async function editZonaCalles(zonaId) {
-    currentZona = zonas.find(z => (z.id === zonaId) || (z.zonaId === zonaId));
+// Eliminar zona
+async function deleteZona(zonaId) {
+    const zona = zonas.find(z => (z.id === zonaId) || (z.zonaId === zonaId));
+    if (!zona) {
+        showAlert('Zona no encontrada', 'error');
+        return;
+    }
     
-    const modal = new bootstrap.Modal(document.getElementById('modalCalles'));
-    modal.show();
+    const nombreZona = zona.nombre_zona || zona.nombreZona;
+    const confirmDelete = confirm(`¿Está seguro que desea eliminar la zona "${nombreZona}"?`);
     
-    // Mostrar loading
-    document.getElementById('contenidoCalles').innerHTML = `
-        <div class="loading">
-            <div class="spinner-border spinner-border-custom" role="status">
-                <span class="visually-hidden">Cargando...</span>
-            </div>
-            <p class="mt-2">Procesando calles de la zona...</p>
-        </div>
-    `;
+    if (!confirmDelete) {
+        return;
+    }
     
     try {
-        // Simular procesamiento de calles (aquí implementarías la lógica real)
-        setTimeout(() => {
-            renderCallesZona(zonaId);
-        }, 2000);
-    } catch (error) {
-        console.error('Error procesando calles:', error);
-    }
-}
-
-// Renderizar calles de zona
-function renderCallesZona(zonaId) {
-    const container = document.getElementById('contenidoCalles');
-    
-    // Obtener calles de la zona actual o usar datos simulados
-    const callesZona = currentZona.calles || [];
-    const nombreZona = currentZona.nombre_zona || currentZona.nombreZona;
-    
-    // Si no hay calles, usar datos simulados
-    const callesSimuladas = callesZona.length > 0 ? callesZona : [
-        { nombre_calle: 'Av. Corrientes', altura_desde: 100, altura_hasta: 2000 },
-        { nombre_calle: 'Av. Santa Fe', altura_desde: 500, altura_hasta: 3000 },
-        { nombre_calle: 'Av. Córdoba', altura_desde: 200, altura_hasta: 2500 }
-    ];
-    
-    container.innerHTML = `
-        <div class="mb-3">
-            <h6>Zona: ${nombreZona}</h6>
-            <p class="text-muted">Edite las alturas de las calles que están en esta zona de cobertura:</p>
-        </div>
+        // Marcar la zona como eliminada (no la eliminamos físicamente hasta guardar)
+        zona.eliminada = true;
         
-        <div id="listaCalles">
-            ${callesSimuladas.map((calle, index) => `
-                <div class="row mb-3">
-                    <div class="col-5">
-                        <input type="text" class="form-control" value="${calle.nombre_calle || calle.nombreCalle}" readonly>
-                    </div>
-                    <div class="col-3">
-                        <input type="number" class="form-control altura-desde" value="${calle.altura_desde || calle.alturaDesde}" placeholder="Desde">
-                    </div>
-                    <div class="col-3">
-                        <input type="number" class="form-control altura-hasta" value="${calle.altura_hasta || calle.alturaHasta}" placeholder="Hasta">
-                    </div>
-                    <div class="col-1">
-                        <button class="btn btn-sm btn-outline-danger" onclick="removeCalle(${index})">
-                            <i class="fas fa-trash"></i>
-                        </button>
-                    </div>
-                </div>
-            `).join('')}
-        </div>
-        
-        <div class="text-center">
-            <button class="btn btn-outline-primary" onclick="addCalle()">
-                <i class="fas fa-plus me-2"></i>Agregar Calle
-            </button>
-        </div>
-    `;
-}
-
-// Agregar calle
-function addCalle() {
-    const container = document.getElementById('listaCalles');
-    const index = container.children.length;
-    
-    const nuevaCalle = `
-        <div class="row mb-3">
-            <div class="col-5">
-                <input type="text" class="form-control nombre-calle" placeholder="Nombre de la calle">
-            </div>
-            <div class="col-3">
-                <input type="number" class="form-control altura-desde" placeholder="Desde">
-            </div>
-            <div class="col-3">
-                <input type="number" class="form-control altura-hasta" placeholder="Hasta">
-            </div>
-            <div class="col-1">
-                <button class="btn btn-sm btn-outline-danger" onclick="removeCalle(${index})">
-                    <i class="fas fa-trash"></i>
-                </button>
-            </div>
-        </div>
-    `;
-    
-    container.insertAdjacentHTML('beforeend', nuevaCalle);
-}
-
-// Remover calle
-function removeCalle(index) {
-    const container = document.getElementById('listaCalles');
-    const fila = container.children[index];
-    if (fila) {
-        fila.remove();
-    }
-}
-
-// Guardar calles
-async function saveCalles() {
-    const filas = document.querySelectorAll('#listaCalles .row');
-    const calles = [];
-    
-    filas.forEach(fila => {
-        const nombreCalle = fila.querySelector('.nombre-calle, input[readonly]')?.value;
-        const alturaDesde = parseInt(fila.querySelector('.altura-desde')?.value);
-        const alturaHasta = parseInt(fila.querySelector('.altura-hasta')?.value);
-        
-        if (nombreCalle && !isNaN(alturaDesde) && !isNaN(alturaHasta)) {
-            calles.push({
-                nombre_calle: nombreCalle,
-                altura_desde: alturaDesde,
-                altura_hasta: alturaHasta
-            });
-        }
-    });
-    
-    try {
-        const zonaId = currentZona.id || currentZona.zonaId;
-        const response = await fetch('/api/guardar-calles-zona', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                zona_id: zonaId,
-                calles: calles
-            })
+        // Remover el polígono del mapa
+        map.eachLayer(layer => {
+            if (layer.options && layer.options.isZona && layer.options.zonaId === zonaId) {
+                map.removeLayer(layer);
+            }
         });
+            
+            // Marcar que hay cambios sin guardar
+            if (currentSucursal) {
+                markAsChanged(currentSucursal.id);
+            }
         
-        if (response.ok) {
-            showAlert('Calles guardadas exitosamente', 'success');
-            bootstrap.Modal.getInstance(document.getElementById('modalCalles')).hide();
-        } else {
-            throw new Error('Error al guardar calles');
-        }
+        // Actualizar la lista de zonas
+        renderZonas();
+        
+        showAlert(`Zona "${nombreZona}" marcada para eliminación`, 'warning');
+        
     } catch (error) {
-        console.error('Error guardando calles:', error);
-        showAlert('Error al guardar las calles', 'danger');
+        console.error('Error eliminando zona:', error);
+        showAlert('Error al eliminar la zona', 'danger');
     }
 }
 
-// Limpiar mapa
-function clearMap() {
-    drawnItems.clearLayers();
+// Limpiar polígonos existentes del mapa
+function clearExistingPolygons() {
     map.eachLayer(layer => {
         if (layer.options && layer.options.isZona) {
             map.removeLayer(layer);
         }
     });
+}
+
+// Limpiar marcador de sucursal
+function clearSucursalMarker() {
+    if (sucursalMarker) {
+        map.removeLayer(sucursalMarker);
+        sucursalMarker = null;
+    }
+}
+
+// Mostrar marcador de sucursal
+function showSucursalMarker(sucursal) {
+    if (!sucursal) return;
+    
+    // Limpiar marcador anterior si existe
+    clearSucursalMarker();
+    
+    // Crear icono personalizado para la sucursal
+    const sucursalIcon = L.divIcon({
+        className: 'sucursal-marker',
+        html: '<i class="fas fa-store" style="color: #667eea; font-size: 24px;"></i>',
+        iconSize: [30, 30],
+        iconAnchor: [15, 15]
+    });
+    
+    // Crear marcador
+    sucursalMarker = L.marker([sucursal.latitud, sucursal.longitud], {
+        icon: sucursalIcon
+    }).addTo(map);
+    
+    // Agregar popup con información de la sucursal
+    sucursalMarker.bindPopup(`
+        <div class="text-center">
+            <h6><i class="fas fa-store me-2"></i>${sucursal.nombre}</h6>
+            <p class="mb-2">${sucursal.direccion}</p>
+            <small class="text-muted">Sucursal seleccionada</small>
+        </div>
+    `).openPopup();
+}
+
+// Limpiar mapa
+function clearMap() {
+    drawnItems.clearLayers();
+    clearExistingPolygons();
+    clearSucursalMarker();
     showAlert('Mapa limpiado', 'info');
 }
 
@@ -763,6 +948,247 @@ function showAlert(message, type = 'info') {
             alertDiv.remove();
         }
     }, 5000);
+}
+
+// Actualizar visibilidad del botón de guardar
+function updateSaveButtonVisibility(sucursalId) {
+    const saveButton = document.getElementById(`btnSaveChanges_${sucursalId}`);
+    console.log('updateSaveButtonVisibility llamado para sucursal:', sucursalId);
+    console.log('hasUnsavedChanges:', hasUnsavedChanges);
+    console.log('saveButton encontrado:', !!saveButton);
+    
+    if (saveButton) {
+        if (hasUnsavedChanges) {
+            saveButton.classList.add('visible');
+            console.log('Botón de guardar mostrado');
+        } else {
+            saveButton.classList.remove('visible');
+            console.log('Botón de guardar ocultado');
+        }
+    }
+}
+
+// Marcar que hay cambios sin guardar
+function markAsChanged(sucursalId) {
+    console.log('markAsChanged llamado para sucursal:', sucursalId);
+    console.log('Estado anterior de hasUnsavedChanges:', hasUnsavedChanges);
+    hasUnsavedChanges = true;
+    console.log('Estado nuevo de hasUnsavedChanges:', hasUnsavedChanges);
+    updateSaveButtonVisibility(sucursalId);
+}
+
+// Guardar cambios de zonas
+async function saveZonasChanges(sucursalId) {
+    console.log('saveZonasChanges llamado para sucursal:', sucursalId);
+    console.log('hasUnsavedChanges:', hasUnsavedChanges);
+    
+    if (!hasUnsavedChanges) {
+        showAlert('No hay cambios para guardar', 'info');
+        return;
+    }
+    
+    try {
+        // Obtener las zonas modificadas, nuevas y eliminadas
+        console.log('Zonas actuales:', zonas);
+        console.log('Zonas originales:', originalZonas);
+        
+        const zonasModificadas = zonas.filter(zona => {
+            // Excluir zonas marcadas como eliminadas (las manejaremos por separado)
+            if (zona.eliminada) {
+                return false;
+            }
+            
+            // Si la zona no tiene ID, es una zona nueva
+            if (!zona.id) {
+                console.log('Zona nueva encontrada:', zona);
+                return true;
+            }
+            
+            // Si la zona tiene ID, verificar si ha sido modificada
+            const zonaOriginal = originalZonas.find(orig => orig.id === zona.id);
+            if (!zonaOriginal) {
+                console.log('Zona original no encontrada, marcando como nueva:', zona);
+                return true;
+            }
+            
+            // Comparar campos específicos en lugar de usar JSON.stringify
+            const isModified = (
+                zona.nombre_zona !== zonaOriginal.nombre_zona ||
+                zona.activa !== zonaOriginal.activa ||
+                JSON.stringify(zona.poligono_coordenadas) !== JSON.stringify(zonaOriginal.poligono_coordenadas)
+            );
+            
+            if (isModified) {
+                console.log('Zona modificada encontrada:', zona);
+                console.log('Cambios detectados:');
+                console.log('- Nombre:', zona.nombre_zona, 'vs', zonaOriginal.nombre_zona);
+                console.log('- Activa:', zona.activa, 'vs', zonaOriginal.activa);
+                console.log('- Coordenadas:', zona.poligono_coordenadas, 'vs', zonaOriginal.poligono_coordenadas);
+            }
+            return isModified;
+        });
+        
+        // Obtener zonas marcadas como eliminadas
+        const zonasEliminadas = zonas.filter(zona => zona.eliminada && zona.id);
+        console.log('Zonas eliminadas:', zonasEliminadas);
+        
+        // Verificar si hay cambios para procesar
+        if (zonasModificadas.length === 0 && zonasEliminadas.length === 0) {
+            showAlert('No hay cambios para guardar', 'info');
+            return;
+        }
+        
+        // Preparar mensaje de confirmación
+        let confirmMessage = '¿Está seguro que desea guardar los cambios realizados en las zonas de cobertura?\n\n';
+        if (zonasModificadas.length > 0) {
+            confirmMessage += `• ${zonasModificadas.length} zona(s) modificada(s)\n`;
+        }
+        if (zonasEliminadas.length > 0) {
+            confirmMessage += `• ${zonasEliminadas.length} zona(s) eliminada(s)\n`;
+        }
+        
+        // Mostrar confirmación
+        const confirmSave = confirm(confirmMessage);
+        if (!confirmSave) {
+            return;
+        }
+        
+        // Mostrar indicador de carga
+        const saveButton = document.getElementById(`btnSaveChanges_${sucursalId}`);
+        const originalContent = saveButton.innerHTML;
+        saveButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+        saveButton.disabled = true;
+        
+        console.log('Zonas a guardar:', zonasModificadas);
+        console.log('Zonas a eliminar:', zonasEliminadas);
+        
+        // Guardar cada zona modificada
+        let savedCount = 0;
+        for (const zona of zonasModificadas) {
+            try {
+                const coordenadas = zona.poligono_coordenadas;
+                
+                console.log('=== INICIANDO GUARDADO DE ZONA ===');
+                console.log('Zona a guardar:', zona);
+                console.log('Datos a enviar:', {
+                    sucursal_id: parseInt(sucursalId),
+                    nombre_zona: zona.nombre_zona,
+                    poligono_coordenadas: coordenadas,
+                    activa: zona.activa !== false
+                });
+                
+                const requestData = {
+                    sucursal_id: parseInt(sucursalId),
+                    nombre_zona: zona.nombre_zona,
+                    poligono_coordenadas: coordenadas,
+                    activa: zona.activa !== false
+                };
+                
+                console.log('Realizando petición POST a /api/guardar-zona...');
+                const response = await fetch('/api/guardar-zona', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(requestData)
+                });
+                
+                console.log('Respuesta recibida:', response.status, response.statusText);
+                
+                if (response.ok) {
+                    const responseData = await response.json();
+                    console.log('Zona guardada exitosamente:', responseData);
+                    savedCount++;
+                } else {
+                    const errorData = await response.json();
+                    console.error('Error en respuesta:', errorData);
+                    throw new Error(errorData.error || 'Error al guardar zona');
+                }
+                console.log('=== FIN GUARDADO DE ZONA ===');
+            } catch (error) {
+                console.error('Error guardando zona:', error);
+                throw error;
+            }
+        }
+        
+        // Procesar zonas eliminadas (llamar API externa y remover del array local)
+        let deletedCount = 0;
+        for (const zonaEliminada of zonasEliminadas) {
+            console.log('Procesando zona eliminada:', zonaEliminada);
+            
+            try {
+                // Llamar al endpoint de eliminación en la API externa
+                const nombreZona = zonaEliminada.nombre_zona || zonaEliminada.nombreZona;
+                console.log('Eliminando zona en API externa:', {
+                    sucursal_id: parseInt(sucursalId),
+                    nombre_zona: nombreZona
+                });
+                
+                const deleteResponse = await fetch('/api/eliminar-zona', {
+                    method: 'DELETE',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        sucursal_id: parseInt(sucursalId),
+                        nombre_zona: nombreZona
+                    })
+                });
+                
+                if (deleteResponse.ok) {
+                    const deleteData = await deleteResponse.json();
+                    console.log('Zona eliminada exitosamente en API externa:', deleteData);
+                } else {
+                    const errorData = await deleteResponse.json();
+                    console.error('Error eliminando zona en API externa:', errorData);
+                    throw new Error(errorData.error || 'Error al eliminar zona en API externa');
+                }
+                
+                // Remover la zona del array local solo si la eliminación fue exitosa
+                const index = zonas.findIndex(z => z.id === zonaEliminada.id);
+                if (index !== -1) {
+                    zonas.splice(index, 1);
+                    deletedCount++;
+                }
+                
+            } catch (error) {
+                console.error('Error eliminando zona:', error);
+                throw error;
+            }
+        }
+        
+        // Actualizar estado
+        console.log('Actualizando estado después del guardado');
+        hasUnsavedChanges = false;
+        originalZonas = JSON.parse(JSON.stringify(zonas));
+        updateSaveButtonVisibility(sucursalId);
+        
+        // Mostrar mensaje de éxito
+        let successMessage = '';
+        if (savedCount > 0 && deletedCount > 0) {
+            successMessage = `Se guardaron ${savedCount} zona(s) y se eliminaron ${deletedCount} zona(s) exitosamente`;
+        } else if (savedCount > 0) {
+            successMessage = `Se guardaron exitosamente ${savedCount} zona(s) de cobertura`;
+        } else if (deletedCount > 0) {
+            successMessage = `Se eliminaron exitosamente ${deletedCount} zona(s) de cobertura`;
+        }
+        showAlert(successMessage, 'success');
+        
+        // Recargar zonas para asegurar sincronización
+        console.log('Recargando zonas para sincronización');
+        loadZonasSucursal(sucursalId);
+        
+    } catch (error) {
+        console.error('Error guardando cambios:', error);
+        showAlert(`Error al guardar los cambios: ${error.message}`, 'danger');
+    } finally {
+        // Restaurar botón
+        const saveButton = document.getElementById(`btnSaveChanges_${sucursalId}`);
+        if (saveButton) {
+            saveButton.innerHTML = '<i class="fas fa-save"></i>';
+            saveButton.disabled = false;
+        }
+    }
 }
 
 // Inicializar aplicación

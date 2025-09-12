@@ -191,7 +191,7 @@ class ExternalAPIService:
                 subsidiary = {
                     'id': item.get('sucursalId'),                    # ID de la sucursal
                     'nombre': item.get('nombre'),                    # Nombre de la sucursal
-                    'direccion': f"{item.get('calle', '')} {item.get('altura', '')}".strip(),  # Dirección completa
+                    'direccion': item.get('direccion', ''),  # Dirección completa
                     'latitud': item.get('latitud'),                  # Coordenada de latitud
                     'longitud': item.get('longitud'),                # Coordenada de longitud
                     'ciudad': item.get('ciudad'),                    # Ciudad donde está ubicada
@@ -239,8 +239,12 @@ class ExternalAPIService:
             # =====================================================================
             # NORMALIZACIÓN DE DATOS DE ZONAS
             # =====================================================================
+            # La API externa devuelve un objeto con la propiedad 'zonasCobertura'
+            # que contiene la lista de zonas
+            zonas_data = response.get('zonasCobertura', [])
+            
             zones = []
-            for item in response:
+            for item in zonas_data:
                 # Crear diccionario con formato estándar para cada zona
                 zone = {
                     'id': item.get('zonaId'),                    # ID de la zona
@@ -249,8 +253,26 @@ class ExternalAPIService:
                     'poligono_coordenadas': item.get('poligonoCoordenadas'),  # Coordenadas del polígono
                     'fecha_creacion': item.get('fechaCreacion'), # Cuándo se creó la zona
                     'activa': item.get('activa', True),          # Si la zona está activa (por defecto True)
-                    'calles': item.get('calles', [])             # Lista de calles en la zona (por defecto lista vacía)
                 }
+                
+                # Logging detallado para debug de coordenadas
+                logger.info(f"=== RECIBIENDO ZONA DE API EXTERNA ===")
+                logger.info(f"Zona: {zone['nombre_zona']}")
+                logger.info(f"Coordenadas recibidas: {zone['poligono_coordenadas']}")
+                logger.info(f"Tipo de coordenadas: {type(zone['poligono_coordenadas'])}")
+                if isinstance(zone['poligono_coordenadas'], list) and len(zone['poligono_coordenadas']) > 0:
+                    logger.info(f"Primera coordenada: {zone['poligono_coordenadas'][0]}")
+                    logger.info(f"Última coordenada: {zone['poligono_coordenadas'][-1]}")
+                elif isinstance(zone['poligono_coordenadas'], str):
+                    try:
+                        parsed_coords = json.loads(zone['poligono_coordenadas'])
+                        logger.info(f"Coordenadas parseadas: {parsed_coords}")
+                        if isinstance(parsed_coords, list) and len(parsed_coords) > 0:
+                            logger.info(f"Primera coordenada parseada: {parsed_coords[0]}")
+                            logger.info(f"Última coordenada parseada: {parsed_coords[-1]}")
+                    except json.JSONDecodeError:
+                        logger.error(f"Error parseando coordenadas JSON: {zone['poligono_coordenadas']}")
+                
                 zones.append(zone)
             
             # Registrar en el log cuántas zonas se obtuvieron
@@ -292,9 +314,18 @@ class ExternalAPIService:
                 'sucursalId': zone_data.get('sucursal_id'),              # ID de la sucursal
                 'nombreZona': zone_data.get('nombre_zona'),              # Nombre de la zona
                 'poligonoCoordenadas': zone_data.get('poligono_coordenadas'),  # Coordenadas del polígono
-                'calles': zone_data.get('calles', []),                   # Lista de calles (por defecto vacía)
-                'activa': zone_data.get('activa', True)                  # Estado activo (por defecto True)
+                'activa': zone_data.get('activa', True),                 # Estado activo (por defecto True)
+                'calles': zone_data.get('calles', [])                    # Lista de calles (requerido por la API externa)
             }
+            
+            # Logging detallado para debug de coordenadas
+            logger.info(f"=== ENVIANDO ZONA A API EXTERNA ===")
+            logger.info(f"Zona: {api_data['nombreZona']}")
+            logger.info(f"Coordenadas enviadas: {api_data['poligonoCoordenadas']}")
+            logger.info(f"Tipo de coordenadas: {type(api_data['poligonoCoordenadas'])}")
+            if isinstance(api_data['poligonoCoordenadas'], list) and len(api_data['poligonoCoordenadas']) > 0:
+                logger.info(f"Primera coordenada: {api_data['poligonoCoordenadas'][0]}")
+                logger.info(f"Última coordenada: {api_data['poligonoCoordenadas'][-1]}")
             
             # Hacer petición POST al endpoint de guardado de zonas
             response = self._make_request('POST', Config.GUARDAR_ZONA_ENDPOINT, api_data)
@@ -306,6 +337,41 @@ class ExternalAPIService:
         except Exception as e:
             # Si hay algún error, registrarlo y re-lanzarlo
             logger.error(f"Error al guardar zona de cobertura: {str(e)}")
+            raise
+    
+    def delete_coverage_zone(self, sucursal_id: int, nombre_zona: str) -> Dict:
+        """
+        Elimina una zona de cobertura de la API externa.
+        
+        Este método envía una petición DELETE a la API externa para eliminar
+        una zona de cobertura específica identificada por el ID de sucursal
+        y el nombre de la zona.
+        
+        Args:
+            sucursal_id (int): ID de la sucursal a la que pertenece la zona
+            nombre_zona (str): Nombre de la zona a eliminar
+        
+        Returns:
+            Dict: Respuesta de la API externa con el resultado de la eliminación
+        
+        Raises:
+            requests.RequestException: Si hay un error al comunicarse con la API externa
+        """
+        try:
+            # Construir el endpoint específico para la eliminación
+            # Formato: /internalapi/EliminarZonaCobertura/{sucursalId}/{nombreZona}
+            endpoint = f"{Config.ELIMINAR_ZONA_ENDPOINT}/{sucursal_id}/{nombre_zona}"
+            
+            # Hacer petición DELETE al endpoint de eliminación
+            response = self._make_request('DELETE', endpoint)
+            
+            # Registrar en el log que la zona se eliminó exitosamente
+            logger.info(f"Zona de cobertura eliminada exitosamente: sucursal_id={sucursal_id}, nombre_zona={nombre_zona}")
+            return response
+            
+        except Exception as e:
+            # Si hay algún error, registrarlo y re-lanzarlo
+            logger.error(f"Error al eliminar zona de cobertura: sucursal_id={sucursal_id}, nombre_zona={nombre_zona}, error={str(e)}")
             raise
 
 # =============================================================================

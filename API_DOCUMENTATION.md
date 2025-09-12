@@ -92,6 +92,8 @@ Accept: application/json
 
 **Descripción**: Guarda una nueva zona de cobertura para una sucursal.
 
+**Nota Importante**: El campo `calles` es requerido por la API externa. Si no se proporcionan calles específicas, se debe enviar un array vacío `[]`.
+
 **Headers**:
 ```
 Authorization: Bearer 070CE54A-CF38-4328-90AC-584A1FB3549F
@@ -354,6 +356,55 @@ Para hacer la configuración flexible, utiliza variables de entorno:
 }
 ```
 
+## 3. Eliminar Zona de Cobertura
+
+**Endpoint**: `DELETE /internalapi/EliminarZonaCobertura/{sucursalId}/{nombreZona}`
+
+**Descripción**: Elimina una zona de cobertura específica de una sucursal.
+
+**Headers**:
+```
+Authorization: Bearer 070CE54A-CF38-4328-90AC-584A1FB3549F
+Content-Type: application/json
+Accept: application/json
+```
+
+**Parámetros de Ruta**:
+- `sucursalId` (int): ID de la sucursal
+- `nombreZona` (string): Nombre de la zona a eliminar
+
+**Ejemplo de Petición**:
+```
+DELETE /internalapi/EliminarZonaCobertura/1/Zona%20Norte
+```
+
+**Respuesta Exitosa (200 OK)**:
+```json
+{
+    "mensaje": "Zona de cobertura eliminada exitosamente",
+    "zonaId": 123,
+    "sucursalId": 1,
+    "nombreZona": "Zona Norte"
+}
+```
+
+**Respuesta de Error (404 Not Found)**:
+```json
+{
+    "error": "Zona de cobertura no encontrada",
+    "sucursalId": 1,
+    "nombreZona": "Zona Norte"
+}
+```
+
+**Respuesta de Error (500 Internal Server Error)**:
+```json
+{
+    "error": "Error interno del servidor",
+    "message": "No se pudo eliminar la zona de cobertura"
+}
+```
+
 ## Notas de Implementación
 
 1. **Validación**: Implementar validación robusta de los datos de entrada
@@ -362,3 +413,4 @@ Para hacer la configuración flexible, utiliza variables de entorno:
 4. **Performance**: Considerar implementar caché para consultas frecuentes
 5. **Seguridad**: Validar el token Bearer y implementar rate limiting si es necesario
 6. **Base de Datos**: Asegurar que las transacciones sean atómicas al guardar zonas con calles
+7. **Eliminación**: Al eliminar zonas, verificar que no haya dependencias activas antes de proceder
