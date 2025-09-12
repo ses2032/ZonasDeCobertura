@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistema de Zonas de Cobertura - Delivery</title>
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    
+    <!-- Leaflet Draw CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css" />
+    
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f8f9fa;
+        }
+        
+        .main-container {
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 1rem;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        .content {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+        }
+        
+        .sidebar {
+            width: 350px;
+            background: white;
+            border-right: 1px solid #dee2e6;
+            overflow-y: auto;
+            padding: 1rem;
+        }
+        
+        .map-container {
+            flex: 1;
+            position: relative;
+        }
+        
+        #map {
+            height: 100%;
+            width: 100%;
+        }
+        
+        .control-panel {
+            background: white;
+            border-radius: 10px;
+            padding: 1.5rem;
+            margin-bottom: 1rem;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        .btn-custom {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+            color: white;
+            border-radius: 8px;
+            padding: 0.5rem 1rem;
+            transition: all 0.3s ease;
+        }
+        
+        .btn-custom:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+            color: white;
+        }
+        
+        .btn-success-custom {
+            background: linear-gradient(135deg, #56ab2f 0%, #a8e6cf 100%);
+            border: none;
+            color: white;
+        }
+        
+        .btn-danger-custom {
+            background: linear-gradient(135deg, #ff416c 0%, #ff4b2b 100%);
+            border: none;
+            color: white;
+        }
+        
+        .form-control {
+            border-radius: 8px;
+            border: 1px solid #dee2e6;
+            padding: 0.75rem;
+        }
+        
+        .form-control:focus {
+            border-color: #667eea;
+            box-shadow: 0 0 0 0.2rem rgba(102, 126, 234, 0.25);
+        }
+        
+        .sucursal-item {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 0.5rem;
+            border-left: 4px solid #667eea;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        .sucursal-item:hover {
+            background: #e9ecef;
+            transform: translateX(5px);
+        }
+        
+        .sucursal-item.active {
+            background: #667eea;
+            color: white;
+        }
+        
+        .zona-item {
+            background: #e8f5e8;
+            border-radius: 8px;
+            padding: 0.75rem;
+            margin-bottom: 0.5rem;
+            border-left: 4px solid #28a745;
+        }
+        
+        .modal-content {
+            border-radius: 15px;
+            border: none;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+        }
+        
+        .modal-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 15px 15px 0 0;
+        }
+        
+        .alert-custom {
+            border-radius: 10px;
+            border: none;
+            padding: 1rem;
+        }
+        
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 2rem;
+        }
+        
+        .spinner-border-custom {
+            color: #667eea;
+        }
+        
+        .coverage-result {
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            border-radius: 8px;
+            padding: 1rem;
+            margin-top: 1rem;
+        }
+        
+        .no-coverage {
+            background: #f8d7da;
+            border: 1px solid #f5c6cb;
+        }
+    </style>
+</head>
+<body>
+    <div class="main-container">
+        <!-- Header -->
+        <div class="header">
+            <div class="container-fluid">
+                <div class="row align-items-center">
+                    <div class="col">
+                        <h2><i class="fas fa-map-marked-alt me-2"></i>Sistema de Zonas de Cobertura</h2>
+                        <p class="mb-0">Gestión de áreas de delivery por sucursal</p>
+                    </div>
+                    <div class="col-auto">
+                        <button class="btn btn-light" onclick="toggleSidebar()">
+                            <i class="fas fa-bars"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Content -->
+        <div class="content">
+            <!-- Sidebar -->
+            <div class="sidebar" id="sidebar">
+                <!-- Panel de Control -->
+                <div class="control-panel">
+                    <h5><i class="fas fa-cogs me-2"></i>Panel de Control</h5>
+                    
+                    <!-- Botones principales -->
+                    <div class="d-grid gap-2 mb-3">
+                        <button class="btn btn-custom" onclick="showCreateSucursalModal()">
+                            <i class="fas fa-plus me-2"></i>Nueva Sucursal
+                        </button>
+                        <button class="btn btn-success-custom" onclick="startDrawingZone()" id="btnDrawZone">
+                            <i class="fas fa-draw-polygon me-2"></i>Dibujar Zona
+                        </button>
+                        <button class="btn btn-danger-custom" onclick="clearMap()">
+                            <i class="fas fa-trash me-2"></i>Limpiar Mapa
+                        </button>
+                    </div>
+                    
+                    <!-- Consulta de dirección -->
+                    <div class="mb-3">
+                        <label class="form-label">Consultar Dirección</label>
+                        <div class="input-group">
+                            <input type="text" class="form-control" id="direccionConsulta" placeholder="Ingrese una dirección...">
+                            <button class="btn btn-outline-primary" onclick="consultarDireccion()">
+                                <i class="fas fa-search"></i>
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- Resultado de consulta -->
+                    <div id="resultadoConsulta"></div>
+                </div>
+                
+                <!-- Lista de Sucursales -->
+                <div class="control-panel">
+                    <h5><i class="fas fa-store me-2"></i>Sucursales</h5>
+                    <div id="listaSucursales">
+                        <div class="loading">
+                            <div class="spinner-border spinner-border-custom" role="status">
+                                <span class="visually-hidden">Cargando...</span>
+                            </div>
+                            <p class="mt-2">Cargando sucursales...</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Zonas de Cobertura -->
+                <div class="control-panel">
+                    <h5><i class="fas fa-map-marked-alt me-2"></i>Zonas de Cobertura</h5>
+                    <div id="listaZonas">
+                        <div class="loading">
+                            <div class="spinner-border spinner-border-custom" role="status">
+                                <span class="visually-hidden">Cargando...</span>
+                            </div>
+                            <p class="mt-2">Cargando zonas...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Mapa -->
+            <div class="map-container">
+                <div id="map"></div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Modal Nueva Sucursal -->
+    <div class="modal fade" id="modalSucursal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="fas fa-store me-2"></i>Nueva Sucursal</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="formSucursal">
+                        <div class="mb-3">
+                            <label class="form-label">Nombre de la Sucursal</label>
+                            <input type="text" class="form-control" id="nombreSucursal" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Dirección</label>
+                            <input type="text" class="form-control" id="direccionSucursal" required>
+                        </div>
+                        <div class="row">
+                            <div class="col-6">
+                                <label class="form-label">Latitud</label>
+                                <input type="number" class="form-control" id="latitudSucursal" step="any" required>
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label">Longitud</label>
+                                <input type="number" class="form-control" id="longitudSucursal" step="any" required>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="button" class="btn btn-custom" onclick="saveSucursal()">Guardar Sucursal</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Modal Nueva Zona -->
+    <div class="modal fade" id="modalZona" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="fas fa-draw-polygon me-2"></i>Nueva Zona de Cobertura</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="formZona">
+                        <div class="mb-3">
+                            <label class="form-label">Sucursal</label>
+                            <select class="form-control" id="sucursalZona" required>
+                                <option value="">Seleccione una sucursal</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Nombre de la Zona</label>
+                            <input type="text" class="form-control" id="nombreZona" required>
+                        </div>
+                        <div class="alert alert-info alert-custom">
+                            <i class="fas fa-info-circle me-2"></i>
+                            Dibuje un polígono en el mapa para definir la zona de cobertura.
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="button" class="btn btn-custom" onclick="saveZona()">Guardar Zona</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Modal Calles de Zona -->
+    <div class="modal fade" id="modalCalles" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="fas fa-road me-2"></i>Calles de la Zona</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="contenidoCalles">
+                        <div class="loading">
+                            <div class="spinner-border spinner-border-custom" role="status">
+                                <span class="visually-hidden">Cargando...</span>
+                            </div>
+                            <p class="mt-2">Procesando calles...</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cerrar</button>
+                    <button type="button" class="btn btn-custom" onclick="saveCalles()">Guardar Calles</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+    <script src="static/app.js"></script>
+</body>
+</html>
