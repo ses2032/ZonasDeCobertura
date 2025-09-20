@@ -204,6 +204,31 @@
         .btn-save-changes.visible {
             display: inline-block;
         }
+        
+        /* Rate Limit Indicator Styles */
+        .rate-limit-indicator {
+            transition: all 0.3s ease;
+            font-weight: 500;
+        }
+        
+        .rate-limit-indicator.low {
+            background: #dc3545 !important;
+            animation: pulse 1s infinite;
+        }
+        
+        .rate-limit-indicator.medium {
+            background: #ffc107 !important;
+        }
+        
+        .rate-limit-indicator.high {
+            background: #28a745 !important;
+        }
+        
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.7; }
+            100% { opacity: 1; }
+        }
     </style>
 </head>
 <body>

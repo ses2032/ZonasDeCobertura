@@ -56,6 +56,35 @@ logger = logging.getLogger(__name__)
 DATABASE = 'zonas_cobertura.db'
 
 # =============================================================================
+# FUNCIONES DE RATE LIMITING
+# =============================================================================
+
+def extract_rate_limit_headers(request):
+    """
+    Extrae los headers de rate limiting de la petición entrante.
+    
+    Esta función busca el header 'x-ratelimit-info' en la petición
+    y lo prepara para ser reenviado a la API externa.
+    
+    Args:
+        request: Objeto request de Flask que contiene los headers
+        
+    Returns:
+        dict: Diccionario con headers de rate limiting para reenviar
+    """
+    rate_limit_headers = {}
+    
+    # Buscar el header x-ratelimit-info
+    rate_limit_info = request.headers.get('x-ratelimit-info')
+    if rate_limit_info:
+        rate_limit_headers['x-ratelimit-info'] = rate_limit_info
+        logger.info(f"Header de rate limiting encontrado: {rate_limit_info[:100]}...")
+    else:
+        logger.info("No se encontró header de rate limiting en la petición")
+    
+    return rate_limit_headers
+
+# =============================================================================
 # FUNCIONES DE BASE DE DATOS
 # =============================================================================
 
@@ -175,10 +204,13 @@ def get_sucursales():
         En caso de error: JSON con mensaje de error y código 500
     """
     try:
+        # Extraer headers de rate limiting de la petición entrante
+        rate_limit_headers = extract_rate_limit_headers(request)
+        
         # Obtener el servicio de API externa configurado
         api_service = get_api_service()
         # Llamar al método que obtiene las sucursales de la API externa
-        sucursales = api_service.get_subsidiaries()
+        sucursales = api_service.get_subsidiaries(additional_headers=rate_limit_headers)
         # Convertir la lista de sucursales a formato JSON y devolverla
         return jsonify(sucursales)
     except Exception as e:
@@ -273,10 +305,13 @@ def get_zonas_sucursal(sucursal_id):
         En caso de error: JSON con mensaje de error y código 500
     """
     try:
+        # Extraer headers de rate limiting de la petición entrante
+        rate_limit_headers = extract_rate_limit_headers(request)
+        
         # Obtener el servicio de API externa
         api_service = get_api_service()
         # Llamar al método que obtiene las zonas para una sucursal específica
-        zonas = api_service.get_coverage_zones(sucursal_id)
+        zonas = api_service.get_coverage_zones(sucursal_id, additional_headers=rate_limit_headers)
         # Devolver las zonas como JSON
         return jsonify(zonas)
     except Exception as e:
@@ -502,10 +537,13 @@ def guardar_zona():
         # =====================================================================
         # ENVÍO A API EXTERNA
         # =====================================================================
+        # Extraer headers de rate limiting de la petición entrante
+        rate_limit_headers = extract_rate_limit_headers(request)
+        
         # Obtener el servicio de API externa
         api_service = get_api_service()
         # Enviar los datos a la API externa
-        response = api_service.save_coverage_zone(data)
+        response = api_service.save_coverage_zone(data, additional_headers=rate_limit_headers)
         
         # Devolver respuesta exitosa con los datos de la API externa
         return jsonify({
@@ -549,12 +587,16 @@ def eliminar_zona():
         # =====================================================================
         # ELIMINACIÓN EN API EXTERNA
         # =====================================================================
+        # Extraer headers de rate limiting de la petición entrante
+        rate_limit_headers = extract_rate_limit_headers(request)
+        
         # Obtener el servicio de API externa
         api_service = get_api_service()
         # Enviar la petición de eliminación a la API externa
         response = api_service.delete_coverage_zone(
             sucursal_id=data['sucursal_id'],
-            nombre_zona=data['nombre_zona']
+            nombre_zona=data['nombre_zona'],
+            additional_headers=rate_limit_headers
         )
         
         # Devolver respuesta exitosa con los datos de la API externa

@@ -72,7 +72,7 @@ class ExternalAPIService:
             'Accept': 'application/json'              # Tipo de contenido que esperamos recibir
         }
     
-    def _make_request(self, method: str, endpoint: str, data: Optional[Dict] = None) -> Dict:
+    def _make_request(self, method: str, endpoint: str, data: Optional[Dict] = None, additional_headers: Optional[Dict] = None) -> Dict:
         """
         Método privado que realiza una petición HTTP a la API externa.
         
@@ -84,6 +84,8 @@ class ExternalAPIService:
             endpoint (str): Endpoint de la API (ej: '/internalapi/SubsidiaryList/1')
             data (Optional[Dict]): Datos para enviar en el cuerpo de la petición
                                  (solo para POST/PUT, None para GET/DELETE)
+            additional_headers (Optional[Dict]): Headers adicionales a incluir
+                                               (ej: headers de rate limiting)
             
         Returns:
             Dict: Respuesta de la API convertida a diccionario Python
@@ -99,20 +101,29 @@ class ExternalAPIService:
             logger.info(f"Realizando petición {method} a {url}")
             
             # =====================================================================
+            # COMBINAR HEADERS
+            # =====================================================================
+            # Combinar headers base con headers adicionales (rate limiting, etc.)
+            headers = self.headers.copy()
+            if additional_headers:
+                headers.update(additional_headers)
+                logger.info(f"Headers adicionales incluidos: {list(additional_headers.keys())}")
+            
+            # =====================================================================
             # EJECUTAR PETICIÓN HTTP SEGÚN EL MÉTODO
             # =====================================================================
             if method.upper() == 'GET':
                 # Petición GET: solo obtener datos, sin cuerpo
-                response = requests.get(url, headers=self.headers, timeout=self.timeout)
+                response = requests.get(url, headers=headers, timeout=self.timeout)
             elif method.upper() == 'POST':
                 # Petición POST: enviar datos en el cuerpo (json=data convierte a JSON automáticamente)
-                response = requests.post(url, headers=self.headers, json=data, timeout=self.timeout)
+                response = requests.post(url, headers=headers, json=data, timeout=self.timeout)
             elif method.upper() == 'PUT':
                 # Petición PUT: actualizar datos existentes
-                response = requests.put(url, headers=self.headers, json=data, timeout=self.timeout)
+                response = requests.put(url, headers=headers, json=data, timeout=self.timeout)
             elif method.upper() == 'DELETE':
                 # Petición DELETE: eliminar datos
-                response = requests.delete(url, headers=self.headers, timeout=self.timeout)
+                response = requests.delete(url, headers=headers, timeout=self.timeout)
             else:
                 # Método HTTP no soportado
                 raise ValueError(f"Método HTTP no soportado: {method}")
@@ -159,7 +170,7 @@ class ExternalAPIService:
     # MÉTODOS PÚBLICOS - FUNCIONALIDADES PRINCIPALES
     # =============================================================================
     
-    def get_subsidiaries(self) -> List[Dict]:
+    def get_subsidiaries(self, additional_headers: Optional[Dict] = None) -> List[Dict]:
         """
         Obtiene la lista completa de sucursales desde la API externa.
         
@@ -178,7 +189,7 @@ class ExternalAPIService:
         """
         try:
             # Hacer petición GET al endpoint de lista de sucursales
-            response = self._make_request('GET', Config.SUBSIDIARY_LIST_ENDPOINT)
+            response = self._make_request('GET', Config.SUBSIDIARY_LIST_ENDPOINT, additional_headers=additional_headers)
             
             # =====================================================================
             # NORMALIZACIÓN DE DATOS
@@ -210,7 +221,7 @@ class ExternalAPIService:
             logger.error(f"Error al obtener sucursales: {str(e)}")
             raise
     
-    def get_coverage_zones(self, subsidiary_id: int) -> List[Dict]:
+    def get_coverage_zones(self, subsidiary_id: int, additional_headers: Optional[Dict] = None) -> List[Dict]:
         """
         Obtiene las zonas de cobertura para una sucursal específica.
         
@@ -234,7 +245,7 @@ class ExternalAPIService:
             endpoint = f"{Config.ZONAS_COBERTURA_ENDPOINT}/{subsidiary_id}"
             
             # Hacer petición GET al endpoint de zonas de cobertura
-            response = self._make_request('GET', endpoint)
+            response = self._make_request('GET', endpoint, additional_headers=additional_headers)
             
             # =====================================================================
             # NORMALIZACIÓN DE DATOS DE ZONAS
@@ -284,7 +295,7 @@ class ExternalAPIService:
             logger.error(f"Error al obtener zonas de cobertura para sucursal {subsidiary_id}: {str(e)}")
             raise
     
-    def save_coverage_zone(self, zone_data: Dict) -> Dict:
+    def save_coverage_zone(self, zone_data: Dict, additional_headers: Optional[Dict] = None) -> Dict:
         """
         Guarda una nueva zona de cobertura en la API externa.
         
@@ -328,7 +339,7 @@ class ExternalAPIService:
                 logger.info(f"Última coordenada: {api_data['poligonoCoordenadas'][-1]}")
             
             # Hacer petición POST al endpoint de guardado de zonas
-            response = self._make_request('POST', Config.GUARDAR_ZONA_ENDPOINT, api_data)
+            response = self._make_request('POST', Config.GUARDAR_ZONA_ENDPOINT, api_data, additional_headers=additional_headers)
             
             # Registrar en el log que la zona se guardó exitosamente
             logger.info(f"Zona de cobertura guardada exitosamente: {response}")
@@ -339,7 +350,7 @@ class ExternalAPIService:
             logger.error(f"Error al guardar zona de cobertura: {str(e)}")
             raise
     
-    def delete_coverage_zone(self, sucursal_id: int, nombre_zona: str) -> Dict:
+    def delete_coverage_zone(self, sucursal_id: int, nombre_zona: str, additional_headers: Optional[Dict] = None) -> Dict:
         """
         Elimina una zona de cobertura de la API externa.
         
@@ -363,7 +374,7 @@ class ExternalAPIService:
             endpoint = f"{Config.ELIMINAR_ZONA_ENDPOINT}/{sucursal_id}/{nombre_zona}"
             
             # Hacer petición DELETE al endpoint de eliminación
-            response = self._make_request('DELETE', endpoint)
+            response = self._make_request('DELETE', endpoint, additional_headers=additional_headers)
             
             # Registrar en el log que la zona se eliminó exitosamente
             logger.info(f"Zona de cobertura eliminada exitosamente: sucursal_id={sucursal_id}, nombre_zona={nombre_zona}")

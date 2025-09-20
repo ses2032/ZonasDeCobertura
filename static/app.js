@@ -11,6 +11,11 @@ let sucursalMarker = null;
 let hasUnsavedChanges = false;
 let originalZonas = [];
 
+// Variables para rate limiting
+let rateLimitInfo = null;
+let sessionId = generateSessionId();
+let clientFingerprint = generateClientFingerprint();
+
 // Función para normalizar coordenadas y asegurar consistencia
 function normalizeCoordinates(coords) {
     if (!Array.isArray(coords)) {
@@ -27,6 +32,248 @@ function normalizeCoordinates(coords) {
         }
         return coord;
     });
+}
+
+// =============================================================================
+// FUNCIONES DE RATE LIMITING
+// =============================================================================
+
+// Generar un ID de sesión único
+function generateSessionId() {
+    return 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+}
+
+// Generar un fingerprint del cliente
+function generateClientFingerprint() {
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    ctx.textBaseline = 'top';
+    ctx.font = '14px Arial';
+    ctx.fillText('Client fingerprint', 2, 2);
+    
+    const fingerprint = [
+        navigator.userAgent,
+        navigator.language,
+        screen.width + 'x' + screen.height,
+        new Date().getTimezoneOffset(),
+        canvas.toDataURL()
+    ].join('|');
+    
+    // Crear hash simple del fingerprint
+    let hash = 0;
+    for (let i = 0; i < fingerprint.length; i++) {
+        const char = fingerprint.charCodeAt(i);
+        hash = ((hash << 5) - hash) + char;
+        hash = hash & hash; // Convertir a 32-bit integer
+    }
+    return Math.abs(hash).toString(36);
+}
+
+// Obtener la IP del cliente (simulada para desarrollo)
+function getClientIP() {
+    // En un entorno real, esto vendría del servidor
+    // Para desarrollo, usamos una IP simulada basada en el fingerprint
+    return '192.168.1.' + (Math.abs(clientFingerprint.charCodeAt(0)) % 255);
+}
+
+// Crear objeto RateLimitInfo
+function createRateLimitInfo() {
+    const now = Date.now();
+    const windowStart = Math.floor(now / 60000) * 60000; // Ventana de 1 minuto
+    
+    return {
+        ClientIP: getClientIP(),
+        SessionId: sessionId,
+        UserAgent: navigator.userAgent,
+        Timestamp: now,
+        RequestCount: 1,
+        WindowStart: windowStart,
+        RateLimitKey: `${getClientIP()}_${sessionId}`,
+        ClientFingerprint: clientFingerprint
+    };
+}
+
+// Actualizar RateLimitInfo con información de respuesta
+function updateRateLimitInfo(response) {
+    const limit = response.headers.get('X-RateLimit-Limit');
+    const remaining = response.headers.get('X-RateLimit-Remaining');
+    const reset = response.headers.get('X-RateLimit-Reset');
+    
+    if (limit && remaining && reset) {
+        rateLimitInfo = {
+            ...rateLimitInfo,
+            Limit: parseInt(limit),
+            Remaining: parseInt(remaining),
+            ResetTime: parseInt(reset)
+        };
+        
+        // Actualizar UI con información de rate limit
+        updateRateLimitDisplay();
+    }
+}
+
+// Actualizar la visualización del rate limit en la UI
+function updateRateLimitDisplay() {
+    if (!rateLimitInfo || !rateLimitInfo.Limit) return;
+    
+    const remaining = rateLimitInfo.Remaining || 0;
+    const limit = rateLimitInfo.Limit;
+    const resetTime = rateLimitInfo.ResetTime;
+    
+    // Crear o actualizar el indicador de rate limit
+    let rateLimitIndicator = document.getElementById('rateLimitIndicator');
+    if (!rateLimitIndicator) {
+        rateLimitIndicator = document.createElement('div');
+        rateLimitIndicator.id = 'rateLimitIndicator';
+        rateLimitIndicator.className = 'rate-limit-indicator';
+        rateLimitIndicator.style.cssText = `
+            position: fixed;
+            top: 80px;
+            right: 20px;
+            color: white;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            z-index: 1000;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+        `;
+        document.body.appendChild(rateLimitIndicator);
+    }
+    
+    const resetDate = new Date(resetTime * 1000);
+    const timeUntilReset = Math.max(0, Math.ceil((resetDate - new Date()) / 1000));
+    
+    rateLimitIndicator.innerHTML = `
+        <i class="fas fa-tachometer-alt me-1"></i>
+        ${remaining}/${limit} requests
+        <br>
+        <small>Reset en ${timeUntilReset}s</small>
+    `;
+    
+    // Actualizar clases CSS según el estado
+    rateLimitIndicator.classList.remove('high', 'medium', 'low');
+    if (remaining > limit * 0.5) {
+        rateLimitIndicator.classList.add('high');
+    } else if (remaining > limit * 0.2) {
+        rateLimitIndicator.classList.add('medium');
+    } else {
+        rateLimitIndicator.classList.add('low');
+    }
+}
+
+// Función para hacer peticiones HTTP con rate limiting
+async function fetchWithRateLimit(url, options = {}) {
+    // Crear RateLimitInfo si no existe
+    if (!rateLimitInfo) {
+        rateLimitInfo = createRateLimitInfo();
+    }
+    
+    // Agregar headers de rate limiting
+    const headers = {
+        'Content-Type': 'application/json',
+        'x-ratelimit-info': JSON.stringify(rateLimitInfo),
+        ...options.headers
+    };
+    
+    const requestOptions = {
+        ...options,
+        headers
+    };
+    
+    try {
+        const response = await fetch(url, requestOptions);
+        
+        // Actualizar información de rate limit desde la respuesta
+        updateRateLimitInfo(response);
+        
+        // Manejar errores de rate limit
+        if (response.status === 429) {
+            const errorData = await response.json();
+            const retryAfter = response.headers.get('Retry-After');
+            
+            showRateLimitError(errorData, retryAfter);
+            throw new Error(`Rate limit exceeded: ${errorData.message}`);
+        }
+        
+        return response;
+    } catch (error) {
+        if (error.message.includes('Rate limit exceeded')) {
+            throw error;
+        }
+        throw new Error(`Network error: ${error.message}`);
+    }
+}
+
+// Mostrar error de rate limit
+function showRateLimitError(errorData, retryAfter) {
+    const retrySeconds = parseInt(retryAfter) || 60;
+    const retryDate = new Date(Date.now() + retrySeconds * 1000);
+    
+    const errorMessage = `
+        <div class="alert alert-warning alert-dismissible fade show" role="alert">
+            <i class="fas fa-exclamation-triangle me-2"></i>
+            <strong>Límite de solicitudes excedido</strong><br>
+            ${errorData.message}<br>
+            <small>Puede intentar nuevamente en ${retrySeconds} segundos (${retryDate.toLocaleTimeString()})</small>
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+    `;
+    
+    // Mostrar alerta
+    showAlert(`Límite de solicitudes excedido. Intente nuevamente en ${retrySeconds} segundos.`, 'warning');
+    
+    // Deshabilitar botones temporalmente
+    disableButtonsTemporarily(retrySeconds);
+}
+
+// Deshabilitar botones temporalmente
+function disableButtonsTemporarily(seconds) {
+    const buttons = document.querySelectorAll('button:not(.btn-close)');
+    const originalTexts = new Map();
+    
+    buttons.forEach(button => {
+        originalTexts.set(button, button.innerHTML);
+        button.disabled = true;
+        button.innerHTML = `<i class="fas fa-clock me-1"></i>Esperando ${seconds}s`;
+    });
+    
+    // Rehabilitar botones después del tiempo de espera
+    setTimeout(() => {
+        buttons.forEach(button => {
+            button.disabled = false;
+            const originalText = originalTexts.get(button);
+            if (originalText) {
+                button.innerHTML = originalText;
+            }
+        });
+    }, seconds * 1000);
+}
+
+// Función para probar el sistema de rate limiting
+function testRateLimiting() {
+    console.log('=== PRUEBA DEL SISTEMA DE RATE LIMITING ===');
+    console.log('RateLimitInfo actual:', rateLimitInfo);
+    console.log('Session ID:', sessionId);
+    console.log('Client Fingerprint:', clientFingerprint);
+    console.log('Client IP:', getClientIP());
+    
+    // Probar creación de RateLimitInfo
+    const testRateLimitInfo = createRateLimitInfo();
+    console.log('RateLimitInfo de prueba:', testRateLimitInfo);
+    
+    // Verificar que el header se genera correctamente
+    const headerValue = JSON.stringify(testRateLimitInfo);
+    console.log('Header x-ratelimit-info:', headerValue);
+    
+    // Verificar que se puede parsear correctamente
+    try {
+        const parsed = JSON.parse(headerValue);
+        console.log('Header parseado correctamente:', parsed);
+    } catch (error) {
+        console.error('Error parseando header:', error);
+    }
+    
+    console.log('=== FIN DE PRUEBA ===');
 }
 
 // Inicialización del mapa
@@ -184,11 +431,15 @@ function initMap() {
 // Cargar sucursales
 async function loadSucursales() {
     try {
-        const response = await fetch('/api/sucursales');
+        const response = await fetchWithRateLimit('/api/sucursales');
         sucursales = await response.json();
         renderSucursales();
     } catch (error) {
         console.error('Error cargando sucursales:', error);
+        if (error.message.includes('Rate limit exceeded')) {
+            // El error de rate limit ya se maneja en fetchWithRateLimit
+            return;
+        }
         showAlert('Error al cargar sucursales', 'danger');
     }
 }
@@ -224,12 +475,16 @@ function renderSucursales() {
 // Cargar zonas de cobertura
 async function loadZonas() {
     try {
-        const response = await fetch('/api/zonas');
+        const response = await fetchWithRateLimit('/api/zonas');
         zonas = await response.json();
         renderZonas();
         renderZonasOnMap();
     } catch (error) {
         console.error('Error cargando zonas:', error);
+        if (error.message.includes('Rate limit exceeded')) {
+            // El error de rate limit ya se maneja en fetchWithRateLimit
+            return;
+        }
         showAlert('Error al cargar zonas', 'danger');
     }
 }
@@ -248,7 +503,7 @@ async function loadZonasSucursal(sucursalId) {
             </div>
         `;
         
-        const response = await fetch(`/api/zonas/${sucursalId}`);
+        const response = await fetchWithRateLimit(`/api/zonas/${sucursalId}`);
         if (response.ok) {
             const zonasSucursal = await response.json();
             console.log('Zonas cargadas de la API:', zonasSucursal);
@@ -275,6 +530,10 @@ async function loadZonasSucursal(sucursalId) {
         }
     } catch (error) {
         console.error('Error cargando zonas de sucursal:', error);
+        if (error.message.includes('Rate limit exceeded')) {
+            // El error de rate limit ya se maneja en fetchWithRateLimit
+            return;
+        }
         showAlert('Error al cargar zonas de la sucursal', 'danger');
         
         // Mostrar mensaje de error en la lista
@@ -614,11 +873,8 @@ async function saveZona() {
         console.log('Latitud primera coordenada:', coordenadas[0].latitud);
         console.log('Longitud primera coordenada:', coordenadas[0].longitud);
         
-        const response = await fetch('/api/guardar-zona', {
+        const response = await fetchWithRateLimit('/api/guardar-zona', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
             body: JSON.stringify({
                 sucursal_id: parseInt(sucursalId),
                 nombre_zona: nombreZona,
@@ -672,6 +928,10 @@ async function saveZona() {
         }
     } catch (error) {
         console.error('Error guardando zona:', error);
+        if (error.message.includes('Rate limit exceeded')) {
+            // El error de rate limit ya se maneja en fetchWithRateLimit
+            return;
+        }
         showAlert(`Error al guardar la zona: ${error.message}`, 'danger');
     }
 }
@@ -697,11 +957,8 @@ async function consultarDireccion() {
     `;
     
     try {
-        const response = await fetch('/api/consultar-cobertura', {
+        const response = await fetchWithRateLimit('/api/consultar-cobertura', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
             body: JSON.stringify({ direccion: direccion })
         });
         
@@ -719,6 +976,10 @@ async function consultarDireccion() {
         }
     } catch (error) {
         console.error('Error consultando dirección:', error);
+        if (error.message.includes('Rate limit exceeded')) {
+            // El error de rate limit ya se maneja en fetchWithRateLimit
+            return;
+        }
         resultadoContainer.innerHTML = `
             <div class="alert alert-danger alert-custom">
                 <i class="fas fa-exclamation-triangle me-2"></i>
@@ -1035,11 +1296,8 @@ async function saveZonasChanges(sucursalId) {
                 };
                 
                 console.log('Realizando petición POST a /api/guardar-zona...');
-                const response = await fetch('/api/guardar-zona', {
+                const response = await fetchWithRateLimit('/api/guardar-zona', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
                     body: JSON.stringify(requestData)
                 });
                 
@@ -1074,11 +1332,8 @@ async function saveZonasChanges(sucursalId) {
                     nombre_zona: nombreZona
                 });
                 
-                const deleteResponse = await fetch('/api/eliminar-zona', {
+                const deleteResponse = await fetchWithRateLimit('/api/eliminar-zona', {
                     method: 'DELETE',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
                     body: JSON.stringify({
                         sucursal_id: parseInt(sucursalId),
                         nombre_zona: nombreZona
@@ -1130,6 +1385,10 @@ async function saveZonasChanges(sucursalId) {
         
     } catch (error) {
         console.error('Error guardando cambios:', error);
+        if (error.message.includes('Rate limit exceeded')) {
+            // El error de rate limit ya se maneja en fetchWithRateLimit
+            return;
+        }
         showAlert(`Error al guardar los cambios: ${error.message}`, 'danger');
     } finally {
         // Restaurar botón
@@ -1143,6 +1402,9 @@ async function saveZonasChanges(sucursalId) {
 
 // Inicializar aplicación
 document.addEventListener('DOMContentLoaded', function() {
+    // Inicializar sistema de rate limiting
+    initializeRateLimiting();
+    
     initMap();
     
     // Event listener para Enter en consulta de dirección
@@ -1152,3 +1414,19 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 });
+
+// Inicializar sistema de rate limiting
+function initializeRateLimiting() {
+    console.log('Inicializando sistema de rate limiting...');
+    console.log('Session ID:', sessionId);
+    console.log('Client Fingerprint:', clientFingerprint);
+    
+    // Crear RateLimitInfo inicial
+    rateLimitInfo = createRateLimitInfo();
+    
+    // Ejecutar prueba del sistema
+    testRateLimiting();
+    
+    // Mostrar información inicial
+    showAlert('Sistema de rate limiting inicializado', 'info');
+}
