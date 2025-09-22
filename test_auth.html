@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test de Autenticación</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .success { background-color: #d4edda; border-color: #c3e6cb; }
+        .error { background-color: #f8d7da; border-color: #f5c6cb; }
+        .info { background-color: #d1ecf1; border-color: #bee5eb; }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover { background: #0056b3; }
+        pre { background: #f8f9fa; padding: 10px; border-radius: 5px; overflow-x: auto; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🧪 Test de Autenticación - Sistema de Zonas de Cobertura</h1>
+        
+        <div class="test-section info">
+            <h3>📋 Instrucciones</h3>
+            <p>Esta página te permite probar el sistema de autenticación paso a paso.</p>
+        </div>
+
+        <div class="test-section">
+            <h3>1. Verificar Estado del Servidor</h3>
+            <button onclick="testServerStatus()">Probar Conexión al Servidor</button>
+            <div id="serverStatus"></div>
+        </div>
+
+        <div class="test-section">
+            <h3>2. Verificar Cookie de Autenticación</h3>
+            <button onclick="testCookieCheck()">Verificar Cookie</button>
+            <div id="cookieStatus"></div>
+        </div>
+
+        <div class="test-section">
+            <h3>3. Probar Login con Google</h3>
+            <button onclick="testGoogleLogin()">Iniciar Login con Google</button>
+            <div id="loginStatus"></div>
+        </div>
+
+        <div class="test-section">
+            <h3>4. Verificar Verificación de Usuario</h3>
+            <button onclick="testUserVerification()">Probar Verificación</button>
+            <div id="verificationStatus"></div>
+        </div>
+
+        <div class="test-section">
+            <h3>5. Probar Rate Limiting</h3>
+            <button onclick="testRateLimiting()">Probar Rate Limiting</button>
+            <div id="rateLimitStatus"></div>
+        </div>
+
+        <div class="test-section">
+            <h3>6. Acceder a la Aplicación Principal</h3>
+            <button onclick="goToMainApp()">Ir a la Aplicación Principal</button>
+            <div id="appStatus"></div>
+        </div>
+    </div>
+
+    <script>
+        // Variables para rate limiting
+        let rateLimitInfo = null;
+        let sessionId = generateSessionId();
+        let clientFingerprint = generateClientFingerprint();
+
+        // Generar un ID de sesión único
+        function generateSessionId() {
+            return 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+        }
+
+        // Generar un fingerprint del cliente
+        function generateClientFingerprint() {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            ctx.textBaseline = 'top';
+            ctx.font = '14px Arial';
+            ctx.fillText('Client fingerprint', 2, 2);
+            
+            const fingerprint = [
+                navigator.userAgent,
+                navigator.language,
+                screen.width + 'x' + screen.height,
+                new Date().getTimezoneOffset(),
+                canvas.toDataURL()
+            ].join('|');
+            
+            // Crear hash simple del fingerprint
+            let hash = 0;
+            for (let i = 0; i < fingerprint.length; i++) {
+                const char = fingerprint.charCodeAt(i);
+                hash = ((hash << 5) - hash) + char;
+                hash = hash & hash; // Convertir a 32-bit integer
+            }
+            return Math.abs(hash).toString(36);
+        }
+
+        // Obtener la IP del cliente (simulada para desarrollo)
+        function getClientIP() {
+            // En un entorno real, esto vendría del servidor
+            // Para desarrollo, usamos una IP simulada basada en el fingerprint
+            return '192.168.1.' + (Math.abs(clientFingerprint.charCodeAt(0)) % 255);
+        }
+
+        // Crear objeto RateLimitInfo
+        function createRateLimitInfo() {
+            const now = Date.now();
+            const windowStart = Math.floor(now / 60000) * 60000; // Ventana de 1 minuto
+            
+            return {
+                ClientIP: getClientIP(),
+                SessionId: sessionId,
+                UserAgent: navigator.userAgent,
+                Timestamp: now,
+                RequestCount: 1,
+                WindowStart: windowStart,
+                RateLimitKey: `${getClientIP()}_${sessionId}`,
+                ClientFingerprint: clientFingerprint
+            };
+        }
+
+        // Función para hacer peticiones HTTP con rate limiting
+        async function fetchWithRateLimit(url, options = {}) {
+            // Crear RateLimitInfo si no existe
+            if (!rateLimitInfo) {
+                rateLimitInfo = createRateLimitInfo();
+            }
+            
+            // Agregar headers de rate limiting
+            const headers = {
+                'Content-Type': 'application/json',
+                'x-ratelimit-info': JSON.stringify(rateLimitInfo),
+                ...options.headers
+            };
+            
+            const requestOptions = {
+                ...options,
+                headers,
+                credentials: 'include'  // Incluir cookies de sesión
+            };
+            
+            try {
+                const response = await fetch(url, requestOptions);
+                
+                // Actualizar información de rate limit desde la respuesta
+                const limit = response.headers.get('X-RateLimit-Limit');
+                const remaining = response.headers.get('X-RateLimit-Remaining');
+                const reset = response.headers.get('X-RateLimit-Reset');
+                
+                if (limit && remaining && reset) {
+                    rateLimitInfo = {
+                        ...rateLimitInfo,
+                        Limit: parseInt(limit),
+                        Remaining: parseInt(remaining),
+                        ResetTime: parseInt(reset)
+                    };
+                }
+                
+                // Manejar errores de rate limit
+                if (response.status === 429) {
+                    const errorData = await response.json();
+                    const retryAfter = response.headers.get('Retry-After');
+                    throw new Error(`Rate limit exceeded: ${errorData.message}`);
+                }
+                
+                return response;
+            } catch (error) {
+                if (error.message.includes('Rate limit exceeded')) {
+                    throw error;
+                }
+                throw new Error(`Network error: ${error.message}`);
+            }
+        }
+
+        async function testServerStatus() {
+            const statusDiv = document.getElementById('serverStatus');
+            statusDiv.innerHTML = '<p>🔄 Probando conexión al servidor...</p>';
+            
+            try {
+                const response = await fetch('/');
+                if (response.ok) {
+                    statusDiv.innerHTML = '<div class="success">✅ Servidor funcionando correctamente</div>';
+                } else {
+                    statusDiv.innerHTML = '<div class="error">❌ Error en el servidor: ' + response.status + '</div>';
+                }
+            } catch (error) {
+                statusDiv.innerHTML = '<div class="error">❌ Error de conexión: ' + error.message + '</div>';
+            }
+        }
+
+        async function testCookieCheck() {
+            const statusDiv = document.getElementById('cookieStatus');
+            statusDiv.innerHTML = '<p>🔄 Verificando cookie de autenticación...</p>';
+            
+            try {
+                const response = await fetchWithRateLimit('/auth/check-cookie');
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.hasValidCookie) {
+                        statusDiv.innerHTML = '<div class="success">✅ Cookie válida encontrada<br><pre>' + JSON.stringify(data.user, null, 2) + '</pre></div>';
+                    } else {
+                        statusDiv.innerHTML = '<div class="info">ℹ️ No hay cookie válida - Usuario no autenticado</div>';
+                    }
+                } else {
+                    statusDiv.innerHTML = '<div class="error">❌ Error verificando cookie: ' + response.status + '</div>';
+                }
+            } catch (error) {
+                statusDiv.innerHTML = '<div class="error">❌ Error: ' + error.message + '</div>';
+            }
+        }
+
+        function testGoogleLogin() {
+            const statusDiv = document.getElementById('loginStatus');
+            statusDiv.innerHTML = '<p>🔄 Redirigiendo a Google OAuth...</p>';
+            
+            // Simular el comportamiento del botón de login
+            window.location.href = '/auth/login';
+        }
+
+        async function testUserVerification() {
+            const statusDiv = document.getElementById('verificationStatus');
+            statusDiv.innerHTML = '<p>🔄 Probando verificación de usuario...</p>';
+            
+            // Usar un email de prueba
+            const testEmail = 'test@example.com';
+            
+            try {
+                const response = await fetchWithRateLimit('/auth/verify-user', {
+                    method: 'POST',
+                    body: JSON.stringify({ email: testEmail })
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    statusDiv.innerHTML = '<div class="success">✅ Verificación funcionando<br><pre>' + JSON.stringify(data, null, 2) + '</pre></div>';
+                } else {
+                    const errorData = await response.json();
+                    statusDiv.innerHTML = '<div class="info">ℹ️ Respuesta de verificación: ' + response.status + '<br><pre>' + JSON.stringify(errorData, null, 2) + '</pre></div>';
+                }
+            } catch (error) {
+                statusDiv.innerHTML = '<div class="error">❌ Error: ' + error.message + '</div>';
+            }
+        }
+
+        async function testRateLimiting() {
+            const statusDiv = document.getElementById('rateLimitStatus');
+            statusDiv.innerHTML = '<p>🔄 Probando sistema de rate limiting...</p>';
+            
+            try {
+                // Mostrar información del rate limiting actual
+                if (!rateLimitInfo) {
+                    rateLimitInfo = createRateLimitInfo();
+                }
+                
+                const rateLimitInfoStr = JSON.stringify(rateLimitInfo, null, 2);
+                statusDiv.innerHTML = `
+                    <div class="info">
+                        <h4>📊 Información de Rate Limiting:</h4>
+                        <pre>${rateLimitInfoStr}</pre>
+                        <p>✅ Headers de rate limiting configurados correctamente</p>
+                    </div>
+                `;
+                
+                // Probar una llamada a la API para verificar que los headers se envían
+                setTimeout(async () => {
+                    try {
+                        const response = await fetchWithRateLimit('/auth/check-cookie');
+                        statusDiv.innerHTML += `
+                            <div class="success">
+                                <h4>✅ Prueba de Rate Limiting Exitosa</h4>
+                                <p>Headers enviados correctamente a la API</p>
+                                <p>Respuesta del servidor: ${response.status} ${response.statusText}</p>
+                            </div>
+                        `;
+                    } catch (error) {
+                        statusDiv.innerHTML += `
+                            <div class="error">
+                                <h4>❌ Error en prueba de Rate Limiting</h4>
+                                <p>${error.message}</p>
+                            </div>
+                        `;
+                    }
+                }, 1000);
+                
+            } catch (error) {
+                statusDiv.innerHTML = '<div class="error">❌ Error: ' + error.message + '</div>';
+            }
+        }
+
+        function goToMainApp() {
+            const statusDiv = document.getElementById('appStatus');
+            statusDiv.innerHTML = '<p>🔄 Redirigiendo a la aplicación principal...</p>';
+            
+            window.location.href = '/';
+        }
+
+        // Ejecutar test inicial al cargar la página
+        window.addEventListener('load', function() {
+            testServerStatus();
+        });
+    </script>
+</body>
+</html>

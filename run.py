@@ -27,8 +27,8 @@ en sistemas Unix/Linux con: ./run.py
 import os
 # sys: Para acceso a información del sistema y salida del programa
 import sys
-# Importar la aplicación Flask y la función de inicialización de BD
-from app import app, init_db
+# Importar la aplicación Flask
+from app import app
 
 # =============================================================================
 # FUNCIÓN PRINCIPAL
@@ -63,17 +63,6 @@ def main():
     # Mostrar la versión de Python detectada
     print(f"✅ Python {sys.version.split()[0]} detectado")
     
-    # =====================================================================
-    # INICIALIZACIÓN DE BASE DE DATOS
-    # =====================================================================
-    try:
-        # Llamar a la función que crea las tablas en la base de datos
-        init_db()
-        print("✅ Base de datos inicializada correctamente")
-    except Exception as e:
-        # Si hay algún error al inicializar la BD, mostrar el error y salir
-        print(f"❌ Error inicializando base de datos: {e}")
-        sys.exit(1)
     
     # =====================================================================
     # VERIFICACIÓN DE DEPENDENCIAS
@@ -97,7 +86,6 @@ def main():
     print("\n📋 Información del Sistema:")
     print(f"   • Puerto: 5000")
     print(f"   • Modo: {'Desarrollo' if app.debug else 'Producción'}")
-    print(f"   • Base de datos: zonas_cobertura.db")
     print(f"   • Mapa por defecto: Buenos Aires, Argentina")
     
     print("\n🌐 Acceso:")

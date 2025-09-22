@@ -9,15 +9,38 @@ Sistema web para definir y gestionar zonas de cobertura de delivery por sucursal
 - 📍 **Zonas de Cobertura**: Dibujo de polígonos en el mapa para definir áreas de delivery
 - 🔍 **Consulta de Direcciones**: Verificación automática si una dirección está en zona de cobertura
 - 🏠 **Gestión de Calles**: Definición de rangos de alturas por calle dentro de cada zona
-- 📊 **Base de Datos**: Almacenamiento estructurado en SQLite con matriz de cobertura
+- 🔗 **API Externa**: Integración con API externa para gestión de datos
+- 🔐 **Autenticación OAuth**: Sistema de autenticación con Google OAuth 2.0
 
 ## Tecnologías Utilizadas
 
 - **Backend**: Python Flask
 - **Frontend**: HTML5, CSS3, JavaScript, Bootstrap 5
 - **Mapas**: Leaflet.js con OpenStreetMap
-- **Base de Datos**: SQLite
+- **API Externa**: Integración con sistema de sucursales
 - **Geocodificación**: OpenStreetMap Nominatim API
+- **Autenticación**: Google OAuth 2.0 con Authlib
+
+## Estructura del Proyecto
+
+```
+ZonasDeCobertura/
+├── auth/                                          # Paquete de autenticación OAuth
+│   ├── __init__.py                               # Exports del paquete
+│   ├── auth.py                                   # Módulo principal de autenticación
+│   ├── test_auth.py                              # Pruebas de autenticación
+│   ├── client_secret_*.json                      # Credenciales de Google OAuth
+│   ├── CONFIGURACION_AUTENTICACION.md            # Guía de configuración
+│   ├── IMPLEMENTACION_AUTENTICACION_RESUMEN.md   # Resumen de implementación
+│   └── README.md                                 # Documentación del paquete
+├── static/                                       # Archivos estáticos (CSS, JS)
+├── templates/                                    # Plantillas HTML
+├── app.py                                        # Aplicación principal Flask
+├── config.py                                     # Configuración de la aplicación
+├── api_service.py                                # Servicio para API externa
+├── requirements.txt                              # Dependencias de Python
+└── README.md                                     # Este archivo
+```
 
 ## Instalación
 
@@ -39,14 +62,20 @@ Sistema web para definir y gestionar zonas de cobertura de delivery por sucursal
    pip install -r requirements.txt
    ```
 
-3. **Ejecutar la aplicación**
+3. **Configurar autenticación OAuth** (Opcional)
+   - Ver [auth/CONFIGURACION_AUTENTICACION.md](auth/CONFIGURACION_AUTENTICACION.md) para configuración detallada
+   - Configurar variables de entorno para Google OAuth
+   - Sin configuración OAuth, la aplicación funcionará en modo desarrollo
+
+4. **Ejecutar la aplicación**
    ```bash
    python app.py
    ```
 
-4. **Acceder a la aplicación**
+5. **Acceder a la aplicación**
    - Abrir navegador web
    - Ir a `http://localhost:5000`
+   - Si está configurado OAuth, hacer login con Google
 
 ## Estructura del Proyecto
 
@@ -59,7 +88,7 @@ ZonasDeCobertura/
 │   └── index.html        # Página principal con mapa
 ├── static/
 │   └── app.js           # JavaScript del frontend
-└── zonas_cobertura.db   # Base de datos SQLite (se crea automáticamente)
+└── api_service.py       # Servicio para comunicación con API externa
 ```
 
 ## Uso del Sistema
@@ -103,47 +132,30 @@ ZonasDeCobertura/
 ## API Endpoints
 
 ### Sucursales
-- `GET /api/sucursales` - Obtener todas las sucursales
-- `POST /api/sucursales` - Crear nueva sucursal
+- `GET /api/sucursales` - Obtener todas las sucursales desde API externa
 
 ### Zonas de Cobertura
-- `GET /api/zonas` - Obtener todas las zonas
-- `POST /api/zonas` - Crear nueva zona
+- `GET /api/zonas/{sucursal_id}` - Obtener zonas de una sucursal desde API externa
+- `POST /api/guardar-zona` - Guardar zona en API externa
+- `DELETE /api/eliminar-zona` - Eliminar zona de API externa
 
 ### Geocodificación
 - `POST /api/geocodificar` - Geocodificar dirección
-- `POST /api/consultar-cobertura` - Consultar si dirección está en zona
 
-### Calles
-- `GET /api/obtener-calles-zona` - Obtener calles de una zona
-- `POST /api/guardar-calles-zona` - Guardar calles de una zona
+## API Externa
 
-## Base de Datos
+El sistema se integra con una API externa que proporciona:
 
-### Tablas
+### Endpoints de la API Externa
+- `GET /internalapi/SubsidiaryList/1` - Lista de sucursales
+- `GET /internalapi/GetZonasCobertura/{sucursalId}` - Zonas de cobertura por sucursal
+- `POST /internalapi/GuardarZonaCobertura` - Guardar nueva zona
+- `DELETE /internalapi/EliminarZonaCobertura/{sucursalId}/{nombreZona}` - Eliminar zona
 
-#### `sucursales`
-- `id` (INTEGER, PRIMARY KEY)
-- `nombre` (TEXT)
-- `direccion` (TEXT)
-- `latitud` (REAL)
-- `longitud` (REAL)
-- `activa` (BOOLEAN)
-
-#### `zonas_cobertura`
-- `id` (INTEGER, PRIMARY KEY)
-- `sucursal_id` (INTEGER, FOREIGN KEY)
-- `nombre_zona` (TEXT)
-- `poligono_coordenadas` (TEXT, JSON)
-- `fecha_creacion` (TIMESTAMP)
-- `activa` (BOOLEAN)
-
-#### `calles_cobertura`
-- `id` (INTEGER, PRIMARY KEY)
-- `zona_id` (INTEGER, FOREIGN KEY)
-- `nombre_calle` (TEXT)
-- `altura_desde` (INTEGER)
-- `altura_hasta` (INTEGER)
+### Configuración
+- **Base URL**: `http://localhost:5064`
+- **Token**: `070CE54A-CF38-4328-90AC-584A1FB3549F`
+- **Autenticación**: Bearer Token
 
 ## Configuración
 
@@ -178,7 +190,7 @@ geolocator = Nominatim(user_agent="zonas_cobertura_app")
 - **API RESTful**: Endpoints bien estructurados
 - **Manejo de Errores**: Respuestas de error consistentes
 - **Geocodificación**: Integración con servicios de geocodificación
-- **Base de Datos**: SQLite con relaciones bien definidas
+- **API Externa**: Integración robusta con sistema de sucursales
 
 ### Seguridad
 - **Validación de Entrada**: Validación de datos en frontend y backend
@@ -189,7 +201,7 @@ geolocator = Nominatim(user_agent="zonas_cobertura_app")
 
 ### Limitaciones Actuales
 - Geocodificación limitada a OpenStreetMap
-- No hay autenticación de usuarios
+- Dependencia de API externa para datos
 - Procesamiento de calles simulado (requiere implementación real)
 
 ### Mejoras Sugeridas

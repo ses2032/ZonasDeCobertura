@@ -229,10 +229,235 @@
             50% { opacity: 0.7; }
             100% { opacity: 1; }
         }
+        
+        /* Estilos para la pantalla de administración */
+        .admin-screen {
+            min-height: 100vh;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem;
+        }
+        
+        .admin-container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            padding: 3rem;
+            max-width: 600px;
+            width: 100%;
+            text-align: center;
+        }
+        
+        .admin-header {
+            margin-bottom: 3rem;
+        }
+        
+        .admin-header h1 {
+            color: #333;
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+        }
+        
+        .admin-header h1 i {
+            color: #667eea;
+        }
+        
+        .admin-subtitle {
+            color: #666;
+            font-size: 1.1rem;
+            margin: 0;
+        }
+        
+        .auth-status, .login-section, .next-section, .error-section {
+            margin: 2rem 0;
+        }
+        
+        .login-card, .next-card, .error-card {
+            background: #f8f9fa;
+            border-radius: 15px;
+            padding: 2rem;
+            border: 1px solid #e9ecef;
+        }
+        
+        .login-icon, .error-icon {
+            font-size: 4rem;
+            color: #667eea;
+            margin-bottom: 1.5rem;
+        }
+        
+        .login-card h3, .error-card h3 {
+            color: #333;
+            margin-bottom: 1rem;
+        }
+        
+        .login-card p, .error-card p {
+            color: #666;
+            margin-bottom: 2rem;
+        }
+        
+        .btn-google {
+            background: #4285f4;
+            border: none;
+            color: white;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 1.1rem;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+        
+        .btn-google:hover {
+            background: #3367d6;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(66, 133, 244, 0.4);
+            color: white;
+        }
+        
+        .user-info {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 2rem;
+        }
+        
+        .user-avatar {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            margin-right: 1.5rem;
+            border: 3px solid #667eea;
+        }
+        
+        .user-details {
+            text-align: left;
+        }
+        
+        .user-details h4 {
+            color: #333;
+            margin: 0 0 0.5rem 0;
+            font-size: 1.3rem;
+        }
+        
+        .user-details p {
+            color: #666;
+            margin: 0;
+            font-size: 1rem;
+        }
+        
+        .next-description {
+            color: #666;
+            margin-bottom: 2rem;
+            font-size: 1.1rem;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+            padding: 12px 30px;
+            border-radius: 8px;
+            font-size: 1.1rem;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+        }
+        
+        .btn-secondary {
+            background: #6c757d;
+            border: none;
+            padding: 10px 24px;
+            border-radius: 8px;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+        
+        .btn-secondary:hover {
+            background: #5a6268;
+            transform: translateY(-2px);
+        }
+        
+        .status-loading {
+            padding: 2rem;
+        }
+        
+        .status-loading p {
+            color: #666;
+            margin-top: 1rem;
+        }
     </style>
 </head>
 <body>
-    <div class="main-container">
+    <!-- Pantalla de Administración de Sucursales -->
+    <div id="adminScreen" class="admin-screen">
+        <div class="admin-container">
+            <div class="admin-header">
+                <h1><i class="fas fa-store me-3"></i>Administración de Sucursales</h1>
+                <p class="admin-subtitle">Sistema de gestión de zonas de cobertura</p>
+            </div>
+            
+            <div class="admin-content">
+                <div id="authStatus" class="auth-status">
+                    <div class="status-loading">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">Verificando autenticación...</span>
+                        </div>
+                        <p class="mt-3">Verificando estado de autenticación...</p>
+                    </div>
+                </div>
+                
+                <div id="loginSection" class="login-section" style="display: none;">
+                    <div class="login-card">
+                        <div class="login-icon">
+                            <i class="fas fa-user-lock"></i>
+                        </div>
+                        <h3>Acceso Requerido</h3>
+                        <p>Para acceder al sistema de administración de sucursales, debe autenticarse con su cuenta de Google.</p>
+                        <button id="googleLoginBtn" class="btn btn-google" onclick="initiateGoogleAuth()">
+                            <i class="fab fa-google me-2"></i>Iniciar Sesión con Google
+                        </button>
+                    </div>
+                </div>
+                
+                <div id="nextSection" class="next-section" style="display: none;">
+                    <div class="next-card">
+                        <div class="user-info">
+                            <img id="userPicture" src="" alt="User" class="user-avatar">
+                            <div class="user-details">
+                                <h4 id="userName"></h4>
+                                <p id="userEmail" class="text-muted"></p>
+                            </div>
+                        </div>
+                        <p class="next-description">Usuario autenticado correctamente. Haga clic en "Siguiente" para acceder al sistema.</p>
+                        <button id="nextBtn" class="btn btn-primary btn-lg" onclick="proceedToSystem()">
+                            <i class="fas fa-arrow-right me-2"></i>Siguiente
+                        </button>
+                    </div>
+                </div>
+                
+                <div id="errorSection" class="error-section" style="display: none;">
+                    <div class="error-card">
+                        <div class="error-icon">
+                            <i class="fas fa-exclamation-triangle"></i>
+                        </div>
+                        <h3>Acceso No Autorizado</h3>
+                        <p id="errorMessage">Su cuenta no está registrada en el sistema. Contacte al administrador para obtener acceso.</p>
+                        <button class="btn btn-secondary" onclick="resetAuthFlow()">
+                            <i class="fas fa-redo me-2"></i>Intentar Nuevamente
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Pantalla Principal del Sistema (oculta inicialmente) -->
+    <div id="mainSystem" class="main-container" style="display: none;">
         <!-- Header -->
         <div class="header">
             <div class="container-fluid">
@@ -242,6 +467,17 @@
                         <p class="mb-0">Gestión de áreas de delivery por sucursal</p>
                     </div>
                     <div class="col-auto">
+                        <!-- Información del usuario autenticado -->
+                        <div id="userInfo" class="d-inline-block me-3">
+                            <span id="userName" class="text-white me-2"></span>
+                            <img id="userPicture" src="" alt="User" class="rounded-circle me-2" style="width: 32px; height: 32px;">
+                        </div>
+                        
+                        <!-- Botón de logout -->
+                        <button id="logoutBtn" class="btn btn-outline-light" onclick="logout()">
+                            <i class="fas fa-sign-out-alt me-1"></i>Cerrar Sesión
+                        </button>
+                        
                         <button class="btn btn-light" onclick="toggleSidebar()">
                             <i class="fas fa-bars"></i>
                         </button>
@@ -266,6 +502,22 @@
                         <button class="btn btn-danger-custom" onclick="clearMap()">
                             <i class="fas fa-trash me-2"></i>Limpiar Mapa
                         </button>
+                        
+                        <!-- Botones de debugging (solo en desarrollo) -->
+                        <div class="mt-2 p-2 border rounded" style="background-color: #f8f9fa;">
+                            <small class="text-muted d-block mb-2">Herramientas de Debug</small>
+                            <div class="d-flex flex-wrap gap-1">
+                                <button class="btn btn-sm btn-outline-info" onclick="testDataLoading()" title="Probar carga de datos">
+                                    <i class="fas fa-vial me-1"></i>Probar
+                                </button>
+                                <button class="btn btn-sm btn-outline-secondary" onclick="checkServerSession()" title="Verificar sesión del servidor">
+                                    <i class="fas fa-server me-1"></i>Sesión
+                                </button>
+                                <button class="btn btn-sm btn-outline-warning" onclick="resetAndReload()" title="Reset y recargar">
+                                    <i class="fas fa-redo me-1"></i>Reset
+                                </button>
+                            </div>
+                        </div>
                     </div>
                     
                     <!-- Consulta de dirección -->
@@ -347,6 +599,33 @@
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
                     <button type="button" class="btn btn-custom" onclick="saveZona()">Guardar Zona</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Modal de Autenticación -->
+    <div class="modal fade" id="authModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="fas fa-lock me-2"></i>Autenticación Requerida</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="authModalContent">
+                        <div class="text-center">
+                            <i class="fas fa-user-lock fa-3x text-muted mb-3"></i>
+                            <p>Para acceder a esta funcionalidad, debe iniciar sesión con su cuenta de Google.</p>
+                            <p class="text-muted">Solo los usuarios autorizados pueden gestionar las zonas de cobertura.</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="button" class="btn btn-primary" onclick="login()">
+                        <i class="fab fa-google me-2"></i>Iniciar Sesión con Google
+                    </button>
                 </div>
             </div>
         </div>

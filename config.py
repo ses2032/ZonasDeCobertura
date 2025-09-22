@@ -29,13 +29,6 @@ class Config:
     estos valores según sea necesario.
     """
     
-    # =====================================================================
-    # CONFIGURACIÓN DE BASE DE DATOS
-    # =====================================================================
-    # Ruta completa al archivo de base de datos SQLite
-    # os.path.dirname(__file__) obtiene el directorio donde está este archivo
-    # os.path.join() une rutas de manera compatible con el sistema operativo
-    DATABASE_PATH = os.path.join(os.path.dirname(__file__), 'zonas_cobertura.db')
     
     # =====================================================================
     # CONFIGURACIÓN DE FLASK
@@ -47,6 +40,11 @@ class Config:
     # Modo debug: True para desarrollo, False para producción
     # Convierte la variable de entorno a booleano
     DEBUG = os.environ.get('FLASK_DEBUG', 'True').lower() == 'true'
+    
+    # Configuración del servidor para generar URLs externas
+    SERVER_NAME = os.environ.get('SERVER_NAME', 'localhost:5000')
+    APPLICATION_ROOT = os.environ.get('APPLICATION_ROOT', '/')
+    PREFERRED_URL_SCHEME = os.environ.get('PREFERRED_URL_SCHEME', 'http')
     
     # =====================================================================
     # CONFIGURACIÓN DE GEOCODIFICACIÓN
@@ -110,6 +108,34 @@ class Config:
     EXTERNAL_API_TIMEOUT = int(os.environ.get('EXTERNAL_API_TIMEOUT', '30'))
     
     # =====================================================================
+    # CONFIGURACIÓN DE AUTENTICACIÓN GOOGLE OAUTH
+    # =====================================================================
+    # Credenciales de Google OAuth (obtener desde Google Cloud Console)
+    # Primero intentar desde variables de entorno, luego desde archivo JSON
+    GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID')
+    GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET')
+    
+    # Si no están en variables de entorno, cargar desde archivo JSON
+    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
+        try:
+            import json
+            credentials_file = os.path.join(os.path.dirname(__file__), 'auth', 'client_secret_292447687984-7ig33t4uv3j738g0mrkeg6tbm6hps8ds.apps.googleusercontent.com.json')
+            if os.path.exists(credentials_file):
+                with open(credentials_file, 'r') as f:
+                    credentials = json.load(f)
+                    GOOGLE_CLIENT_ID = credentials['web']['client_id']
+                    GOOGLE_CLIENT_SECRET = credentials['web']['client_secret']
+        except Exception as e:
+            print(f"Error cargando credenciales de Google OAuth: {e}")
+    
+    # URL de redirección después del login (debe estar registrada en Google Console)
+    # Para desarrollo, usar la URI que está registrada en Google Console
+    GOOGLE_REDIRECT_URI = os.environ.get('GOOGLE_REDIRECT_URI', 'http://localhost:5000/auth/callback')
+    
+    # Configuración de sesión
+    PERMANENT_SESSION_LIFETIME = int(os.environ.get('PERMANENT_SESSION_LIFETIME', '3600'))  # 1 hora por defecto
+    
+    # =====================================================================
     # ENDPOINTS DE LA API EXTERNA
     # =====================================================================
     # Endpoint para obtener la lista de sucursales
@@ -123,6 +149,9 @@ class Config:
     
     # Endpoint para eliminar zonas de cobertura
     ELIMINAR_ZONA_ENDPOINT = '/internalapi/EliminarZonaCobertura'
+    
+    # Endpoint para verificar usuarios administradores
+    VERIFICAR_USUARIO_ADMIN_ENDPOINT = '/internalapi/VerificarUsuarioAdmin'
 
 # =============================================================================
 # CONFIGURACIONES ESPECÍFICAS POR ENTORNO
@@ -161,9 +190,6 @@ class ProductionConfig(Config):
     # Nunca usar claves hardcodeadas en producción
     SECRET_KEY = os.environ.get('SECRET_KEY')
     
-    # Configuración de base de datos para producción
-    # Puede ser una URL de base de datos externa (PostgreSQL, MySQL, etc.)
-    DATABASE_URL = os.environ.get('DATABASE_URL')
 
 class TestingConfig(Config):
     """
@@ -175,9 +201,6 @@ class TestingConfig(Config):
     # Activar modo testing
     TESTING = True
     
-    # Usar base de datos en memoria para las pruebas
-    # Esto hace que las pruebas sean más rápidas y aisladas
-    DATABASE_PATH = ':memory:'
 
 # =============================================================================
 # DICCIONARIO DE CONFIGURACIONES

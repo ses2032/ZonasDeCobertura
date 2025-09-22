@@ -11,6 +11,11 @@ let sucursalMarker = null;
 let hasUnsavedChanges = false;
 let originalZonas = [];
 
+// Variables de autenticación
+let isAuthenticated = false;
+let currentUser = null;
+let authCookie = null;
+
 // Variables para rate limiting
 let rateLimitInfo = null;
 let sessionId = generateSessionId();
@@ -177,7 +182,8 @@ async function fetchWithRateLimit(url, options = {}) {
     
     const requestOptions = {
         ...options,
-        headers
+        headers,
+        credentials: 'include'  // Incluir cookies de sesión
     };
     
     try {
@@ -431,8 +437,15 @@ function initMap() {
 // Cargar sucursales
 async function loadSucursales() {
     try {
-        const response = await fetchWithRateLimit('/api/sucursales');
+        console.log('Iniciando carga de sucursales...');
+        const response = await apiCall('/api/sucursales');
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
         sucursales = await response.json();
+        console.log('Sucursales cargadas exitosamente:', sucursales);
         renderSucursales();
     } catch (error) {
         console.error('Error cargando sucursales:', error);
@@ -440,7 +453,11 @@ async function loadSucursales() {
             // El error de rate limit ya se maneja en fetchWithRateLimit
             return;
         }
-        showAlert('Error al cargar sucursales', 'danger');
+        if (error.message.includes('Sesión expirada') || error.message.includes('Autenticación requerida')) {
+            console.log('Error de autenticación al cargar sucursales');
+            return; // No mostrar alerta, ya se maneja en apiCall
+        }
+        showAlert('Error al cargar sucursales. Verifique su conexión e intente nuevamente.', 'danger');
     }
 }
 
@@ -475,8 +492,15 @@ function renderSucursales() {
 // Cargar zonas de cobertura
 async function loadZonas() {
     try {
-        const response = await fetchWithRateLimit('/api/zonas');
+        console.log('Iniciando carga de zonas...');
+        const response = await apiCall('/api/zonas');
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
         zonas = await response.json();
+        console.log('Zonas cargadas exitosamente:', zonas);
         renderZonas();
         renderZonasOnMap();
     } catch (error) {
@@ -485,7 +509,11 @@ async function loadZonas() {
             // El error de rate limit ya se maneja en fetchWithRateLimit
             return;
         }
-        showAlert('Error al cargar zonas', 'danger');
+        if (error.message.includes('Sesión expirada') || error.message.includes('Autenticación requerida')) {
+            console.log('Error de autenticación al cargar zonas');
+            return; // No mostrar alerta, ya se maneja en apiCall
+        }
+        showAlert('Error al cargar zonas. Verifique su conexión e intente nuevamente.', 'danger');
     }
 }
 
@@ -587,6 +615,12 @@ function renderZonas() {
 // Renderizar zonas en el mapa
 function renderZonasOnMap() {
     console.log('renderZonasOnMap llamado, zonas totales:', zonas.length);
+    
+    // Verificar que el mapa esté inicializado
+    if (!map) {
+        console.log('Mapa no inicializado, saltando renderizado de zonas');
+        return;
+    }
     
     // Limpiar zonas existentes
     clearExistingPolygons();
@@ -708,7 +742,7 @@ function selectSucursal(sucursalId) {
         loadZonasSucursal(sucursalId);
         
         // Centrar el mapa en la sucursal seleccionada
-        if (currentSucursal) {
+        if (currentSucursal && map) {
             map.setView([currentSucursal.latitud, currentSucursal.longitud], 13);
         }
     }
@@ -717,7 +751,7 @@ function selectSucursal(sucursalId) {
 // Mostrar sucursal en el mapa
 function showSucursalOnMap(sucursalId) {
     const sucursal = sucursales.find(s => s.id === sucursalId);
-    if (sucursal) {
+    if (sucursal && map) {
         map.setView([sucursal.latitud, sucursal.longitud], 15);
         
         // Agregar marcador temporal
@@ -769,7 +803,9 @@ function showZonaOnMap(zonaId) {
             });
             
             const bounds = L.polygon(latLngs).getBounds();
-            map.fitBounds(bounds);
+            if (map) {
+                map.fitBounds(bounds);
+            }
         } catch (error) {
             console.error('Error mostrando zona:', error);
         }
@@ -785,18 +821,20 @@ function createZoneForSucursal(sucursalId) {
 
 // Iniciar modo de dibujo
 function startDrawingZone() {
-    console.log('startDrawingZone llamado, currentSucursal:', currentSucursal);
-    
-    if (!currentSucursal) {
-        showAlert('Por favor seleccione una sucursal primero', 'warning');
-        return;
-    }
-    
-    isDrawingMode = true;
-    document.getElementById('btnDrawZone').innerHTML = '<i class="fas fa-stop me-2"></i>Cancelar Dibujo';
-    document.getElementById('btnDrawZone').onclick = cancelDrawing;
-    
-    showAlert('Dibuje un polígono en el mapa para definir la zona de cobertura', 'info');
+    requireAuth(() => {
+        console.log('startDrawingZone llamado, currentSucursal:', currentSucursal);
+        
+        if (!currentSucursal) {
+            showAlert('Por favor seleccione una sucursal primero', 'warning');
+            return;
+        }
+        
+        isDrawingMode = true;
+        document.getElementById('btnDrawZone').innerHTML = '<i class="fas fa-stop me-2"></i>Cancelar Dibujo';
+        document.getElementById('btnDrawZone').onclick = cancelDrawing;
+        
+        showAlert('Dibuje un polígono en el mapa para definir la zona de cobertura', 'info');
+    });
 }
 
 // Cancelar dibujo
@@ -939,54 +977,56 @@ async function saveZona() {
 
 // Consultar dirección
 async function consultarDireccion() {
-    const direccion = document.getElementById('direccionConsulta').value.trim();
-    
-    if (!direccion) {
-        showAlert('Por favor ingrese una dirección', 'warning');
-        return;
-    }
-    
-    const resultadoContainer = document.getElementById('resultadoConsulta');
-    resultadoContainer.innerHTML = `
-        <div class="loading">
-            <div class="spinner-border spinner-border-sm" role="status">
-                <span class="visually-hidden">Consultando...</span>
+    requireAuth(async () => {
+        const direccion = document.getElementById('direccionConsulta').value.trim();
+        
+        if (!direccion) {
+            showAlert('Por favor ingrese una dirección', 'warning');
+            return;
+        }
+        
+        const resultadoContainer = document.getElementById('resultadoConsulta');
+        resultadoContainer.innerHTML = `
+            <div class="loading">
+                <div class="spinner-border spinner-border-sm" role="status">
+                    <span class="visually-hidden">Consultando...</span>
+                </div>
+                <span class="ms-2">Consultando dirección...</span>
             </div>
-            <span class="ms-2">Consultando dirección...</span>
-        </div>
-    `;
-    
-    try {
-        const response = await fetchWithRateLimit('/api/consultar-cobertura', {
-            method: 'POST',
-            body: JSON.stringify({ direccion: direccion })
-        });
+        `;
         
-        const resultado = await response.json();
-        
-        if (response.ok) {
-            renderConsultaResultado(resultado);
-        } else {
+        try {
+            const response = await apiCall('/api/consultar-cobertura', {
+                method: 'POST',
+                body: JSON.stringify({ direccion: direccion })
+            });
+            
+            const resultado = await response.json();
+            
+            if (response.ok) {
+                renderConsultaResultado(resultado);
+            } else {
+                resultadoContainer.innerHTML = `
+                    <div class="alert alert-danger alert-custom">
+                        <i class="fas fa-exclamation-triangle me-2"></i>
+                        ${resultado.error}
+                    </div>
+                `;
+            }
+        } catch (error) {
+            console.error('Error consultando dirección:', error);
+            if (error.message.includes('Rate limit exceeded')) {
+                // El error de rate limit ya se maneja en fetchWithRateLimit
+                return;
+            }
             resultadoContainer.innerHTML = `
                 <div class="alert alert-danger alert-custom">
                     <i class="fas fa-exclamation-triangle me-2"></i>
-                    ${resultado.error}
+                    Error al consultar la dirección
                 </div>
             `;
         }
-    } catch (error) {
-        console.error('Error consultando dirección:', error);
-        if (error.message.includes('Rate limit exceeded')) {
-            // El error de rate limit ya se maneja en fetchWithRateLimit
-            return;
-        }
-        resultadoContainer.innerHTML = `
-            <div class="alert alert-danger alert-custom">
-                <i class="fas fa-exclamation-triangle me-2"></i>
-                Error al consultar la dirección
-            </div>
-        `;
-    }
+    });
 }
 
 // Renderizar resultado de consulta
@@ -1029,6 +1069,8 @@ function renderConsultaResultado(resultado) {
 
 // Mostrar dirección en el mapa
 function showDireccionOnMap(lat, lng) {
+    if (!map) return;
+    
     map.setView([lat, lng], 16);
     
     L.marker([lat, lng])
@@ -1081,16 +1123,18 @@ async function deleteZona(zonaId) {
 
 // Limpiar polígonos existentes del mapa
 function clearExistingPolygons() {
-    map.eachLayer(layer => {
-        if (layer.options && layer.options.isZona) {
-            map.removeLayer(layer);
-        }
-    });
+    if (map) {
+        map.eachLayer(layer => {
+            if (layer.options && layer.options.isZona) {
+                map.removeLayer(layer);
+            }
+        });
+    }
 }
 
 // Limpiar marcador de sucursal
 function clearSucursalMarker() {
-    if (sucursalMarker) {
+    if (sucursalMarker && map) {
         map.removeLayer(sucursalMarker);
         sucursalMarker = null;
     }
@@ -1098,7 +1142,7 @@ function clearSucursalMarker() {
 
 // Mostrar marcador de sucursal
 function showSucursalMarker(sucursal) {
-    if (!sucursal) return;
+    if (!sucursal || !map) return;
     
     // Limpiar marcador anterior si existe
     clearSucursalMarker();
@@ -1128,7 +1172,10 @@ function showSucursalMarker(sucursal) {
 
 // Limpiar mapa
 function clearMap() {
-    drawnItems.clearLayers();
+    // Verificar que drawnItems esté inicializado antes de usarlo
+    if (drawnItems) {
+        drawnItems.clearLayers();
+    }
     clearExistingPolygons();
     clearSucursalMarker();
     showAlert('Mapa limpiado', 'info');
@@ -1400,19 +1447,546 @@ async function saveZonasChanges(sucursalId) {
     }
 }
 
+// =============================================================================
+// FUNCIONES DE AUTENTICACIÓN - NUEVO FLUJO
+// =============================================================================
+
+// Verificar cookie de autenticación al cargar la página
+async function checkAuthCookie() {
+    try {
+        console.log('Verificando cookie de autenticación...');
+        
+        // Verificar si existe una cookie de autenticación
+        const response = await fetch('/auth/check-cookie', {
+            credentials: 'include'
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            if (data.hasValidCookie) {
+                console.log('Cookie válida encontrada:', data.user);
+                authCookie = data.user;
+                showNextSection(data.user);
+                return true;
+            }
+        }
+        
+        console.log('No se encontró cookie válida');
+        showLoginSection();
+        return false;
+        
+    } catch (error) {
+        console.error('Error verificando cookie de autenticación:', error);
+        showLoginSection();
+        return false;
+    }
+}
+
+// Mostrar sección de login
+function showLoginSection() {
+    console.log('Mostrando sección de login');
+    hideAllSections();
+    const loginSection = document.getElementById('loginSection');
+    if (loginSection) {
+        loginSection.style.display = 'block';
+        console.log('Sección de login mostrada');
+    } else {
+        console.error('No se encontró el elemento loginSection');
+    }
+}
+
+// Mostrar sección de siguiente
+function showNextSection(user) {
+    console.log('Mostrando sección de siguiente para usuario:', user);
+    hideAllSections();
+    
+    // Actualizar información del usuario
+    document.getElementById('userName').textContent = user.name;
+    document.getElementById('userEmail').textContent = user.email;
+    document.getElementById('userPicture').src = user.picture;
+    
+    document.getElementById('nextSection').style.display = 'block';
+}
+
+// Mostrar sección de error
+function showErrorSection(message) {
+    console.log('Mostrando sección de error:', message);
+    hideAllSections();
+    
+    document.getElementById('errorMessage').textContent = message;
+    document.getElementById('errorSection').style.display = 'block';
+}
+
+// Ocultar todas las secciones
+function hideAllSections() {
+    document.getElementById('authStatus').style.display = 'none';
+    document.getElementById('loginSection').style.display = 'none';
+    document.getElementById('nextSection').style.display = 'none';
+    document.getElementById('errorSection').style.display = 'none';
+}
+
+// Iniciar autenticación con Google
+function initiateGoogleAuth() {
+    console.log('Iniciando autenticación con Google...');
+    window.location.href = '/auth/login';
+}
+
+// Proceder al sistema después de validar usuario
+async function proceedToSystem() {
+    try {
+        console.log('Validando usuario contra la API...');
+        
+        if (!authCookie) {
+            showErrorSection('No se encontró información de autenticación. Por favor, inicie sesión nuevamente.');
+            return;
+        }
+        
+        // Validar usuario contra la API
+        const response = await fetch(`/auth/verify-user?email=${encodeURIComponent(authCookie.email)}`, {
+            method: 'GET',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            credentials: 'include'
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            if (data.verified) {
+                console.log('Usuario verificado exitosamente');
+                // Mostrar pantalla principal del sistema
+                showMainSystem(authCookie);
+            } else {
+                console.log('Usuario no verificado en la API');
+                showErrorSection('Su cuenta no está registrada en el sistema. Contacte al administrador para obtener acceso.');
+            }
+        } else if (response.status === 404) {
+            console.log('Usuario no encontrado en la API (404)');
+            showErrorSection('Su cuenta no está registrada en el sistema. Contacte al administrador para obtener acceso.');
+        } else {
+            console.error('Error verificando usuario:', response.status);
+            showErrorSection('Error al verificar su cuenta. Intente nuevamente.');
+        }
+        
+    } catch (error) {
+        console.error('Error validando usuario:', error);
+        showErrorSection('Error de conexión al verificar su cuenta. Intente nuevamente.');
+    }
+}
+
+// Mostrar pantalla principal del sistema
+function showMainSystem(user) {
+    console.log('Mostrando pantalla principal del sistema');
+    
+    // Ocultar pantalla de administración
+    document.getElementById('adminScreen').style.display = 'none';
+    
+    // Mostrar pantalla principal
+    document.getElementById('mainSystem').style.display = 'block';
+    
+    // Actualizar información del usuario en el header
+    const userName = document.querySelector('#mainSystem #userName');
+    const userPicture = document.querySelector('#mainSystem #userPicture');
+    
+    if (userName) userName.textContent = user.name;
+    if (userPicture) {
+        userPicture.src = user.picture;
+        userPicture.alt = user.name;
+    }
+    
+    // Establecer variables globales
+    isAuthenticated = true;
+    currentUser = user;
+    
+    // Inicializar el sistema
+    initializeSystem();
+}
+
+// Reiniciar flujo de autenticación
+function resetAuthFlow() {
+    console.log('Reiniciando flujo de autenticación');
+    
+    // Limpiar variables
+    isAuthenticated = false;
+    currentUser = null;
+    authCookie = null;
+    
+    // Ocultar pantalla principal si está visible
+    document.getElementById('mainSystem').style.display = 'none';
+    
+    // Mostrar pantalla de administración
+    document.getElementById('adminScreen').style.display = 'block';
+    
+    // Verificar cookie nuevamente
+    checkAuthCookie();
+}
+
+// Inicializar el sistema después de la autenticación
+async function initializeSystem() {
+    try {
+        console.log('Inicializando sistema...');
+        
+        // Inicializar mapa
+        initMap();
+        
+        // Cargar datos iniciales
+        await loadInitialData();
+        
+        console.log('Sistema inicializado exitosamente');
+        
+    } catch (error) {
+        console.error('Error inicializando sistema:', error);
+        showAlert('Error al inicializar el sistema', 'danger');
+    }
+}
+
+// Actualizar la interfaz de usuario según el estado de autenticación
+function updateAuthUI(authenticated) {
+    const userInfo = document.getElementById('userInfo');
+    const loginBtn = document.getElementById('loginBtn');
+    const logoutBtn = document.getElementById('logoutBtn');
+    const userName = document.getElementById('userName');
+    const userPicture = document.getElementById('userPicture');
+    
+    if (authenticated && currentUser) {
+        // Usuario autenticado
+        userInfo.style.display = 'inline-block';
+        loginBtn.style.display = 'none';
+        logoutBtn.style.display = 'inline-block';
+        
+        userName.textContent = currentUser.name;
+        userPicture.src = currentUser.picture;
+        userPicture.alt = currentUser.name;
+        
+        // Habilitar funcionalidades
+        enableAppFeatures();
+    } else {
+        // Usuario no autenticado
+        userInfo.style.display = 'none';
+        loginBtn.style.display = 'inline-block';
+        logoutBtn.style.display = 'none';
+        
+        // Deshabilitar funcionalidades
+        disableAppFeatures();
+    }
+}
+
+// Cargar datos iniciales después de la autenticación
+async function loadInitialData() {
+    try {
+        console.log('Cargando datos iniciales después de autenticación...');
+        await Promise.all([
+            loadSucursales(),
+            loadZonas()
+        ]);
+        console.log('Datos iniciales cargados exitosamente');
+    } catch (error) {
+        console.error('Error cargando datos iniciales:', error);
+        // Si hay errores de conectividad, ofrecer reintentar
+        if (!error.message.includes('Sesión expirada') && !error.message.includes('Autenticación requerida')) {
+            showRetryOption();
+        }
+    }
+}
+
+// Mostrar opción para reintentar carga de datos
+function showRetryOption() {
+    const retryMessage = `
+        <div class="alert alert-warning alert-dismissible fade show" role="alert">
+            <i class="fas fa-exclamation-triangle me-2"></i>
+            <strong>Error de conectividad</strong><br>
+            No se pudieron cargar los datos iniciales. 
+            <button class="btn btn-sm btn-warning ms-2" onclick="retryLoadData()">
+                <i class="fas fa-redo me-1"></i>Reintentar
+            </button>
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+    `;
+    
+    // Insertar el mensaje al principio del sidebar
+    const sidebar = document.getElementById('sidebar');
+    sidebar.insertAdjacentHTML('afterbegin', retryMessage);
+}
+
+// Reintentar carga de datos
+async function retryLoadData() {
+    console.log('Reintentando carga de datos...');
+    showAlert('Reintentando carga de datos...', 'info');
+    
+    try {
+        await loadInitialData();
+        // Remover el mensaje de reintento si se cargaron exitosamente
+        const retryAlert = document.querySelector('.alert-warning');
+        if (retryAlert) {
+            retryAlert.remove();
+        }
+    } catch (error) {
+        console.error('Error en reintento de carga:', error);
+        showAlert('Error al reintentar. Verifique su conexión.', 'danger');
+    }
+}
+
+// Función para probar manualmente la carga de datos (para debugging)
+async function testDataLoading() {
+    console.log('=== PRUEBA MANUAL DE CARGA DE DATOS ===');
+    
+    try {
+        console.log('1. Verificando estado de autenticación...');
+        console.log('Variables globales:');
+        console.log('  - isAuthenticated:', isAuthenticated);
+        console.log('  - currentUser:', currentUser);
+        
+        const authResponse = await fetch('/auth/status', {
+            credentials: 'include'
+        });
+        console.log('Respuesta HTTP:', authResponse.status, authResponse.statusText);
+        const authData = await authResponse.json();
+        console.log('Estado de autenticación del servidor:', authData);
+        
+        // Actualizar variables globales con la respuesta del servidor
+        if (authData.authenticated) {
+            isAuthenticated = true;
+            currentUser = authData.user;
+            console.log('Variables globales actualizadas:');
+            console.log('  - isAuthenticated:', isAuthenticated);
+            console.log('  - currentUser:', currentUser);
+        } else {
+            isAuthenticated = false;
+            currentUser = null;
+            console.log('Usuario no autenticado según el servidor');
+            showAlert('Usuario no autenticado. Por favor, inicie sesión.', 'warning');
+            return;
+        }
+        
+        console.log('2. Intentando cargar sucursales...');
+        await loadSucursales();
+        
+        console.log('3. Intentando cargar zonas...');
+        await loadZonas();
+        
+        console.log('=== PRUEBA COMPLETADA ===');
+        showAlert('Prueba de carga de datos completada. Revise la consola para detalles.', 'info');
+        
+    } catch (error) {
+        console.error('Error en prueba de carga de datos:', error);
+        showAlert('Error en la prueba de carga de datos. Revise la consola para detalles.', 'danger');
+    }
+}
+
+// Función para verificar el estado de la sesión en el servidor
+async function checkServerSession() {
+    console.log('=== VERIFICACIÓN DE SESIÓN EN SERVIDOR ===');
+    
+    try {
+        const response = await fetch('/auth/status', {
+            credentials: 'include'
+        });
+        console.log('Respuesta del servidor:', response.status, response.statusText);
+        
+        if (response.ok) {
+            const data = await response.json();
+            console.log('Datos de sesión:', data);
+            
+            if (data.authenticated) {
+                console.log('✓ Usuario autenticado en el servidor');
+                console.log('Usuario:', data.user);
+                return true;
+            } else {
+                console.log('✗ Usuario NO autenticado en el servidor');
+                return false;
+            }
+        } else {
+            console.log('✗ Error en respuesta del servidor:', response.status);
+            return false;
+        }
+    } catch (error) {
+        console.error('Error verificando sesión:', error);
+        return false;
+    }
+}
+
+// Función para limpiar datos y reintentar (para debugging)
+function resetAndReload() {
+    console.log('=== RESET Y RECARGA ===');
+    
+    // Limpiar datos actuales
+    sucursales = [];
+    zonas = [];
+    currentSucursal = null;
+    currentZona = null;
+    
+    // Limpiar UI
+    renderSucursales();
+    renderZonas();
+    clearMap();
+    
+    // Verificar sesión en el servidor antes de reintentar
+    checkServerSession().then(isAuth => {
+        if (isAuth) {
+            console.log('Sesión válida encontrada, reintentando carga...');
+            setTimeout(() => {
+                testDataLoading();
+            }, 1000);
+        } else {
+            console.log('No hay sesión válida, solicitando login...');
+            showAlert('Usuario no autenticado. Por favor, inicie sesión.', 'warning');
+        }
+    });
+}
+
+// Habilitar funcionalidades de la aplicación
+function enableAppFeatures() {
+    // Habilitar botones de la aplicación
+    const buttons = document.querySelectorAll('.btn-custom, .btn-success-custom, .btn-danger-custom');
+    buttons.forEach(button => {
+        button.disabled = false;
+    });
+    
+    // Los datos se cargarán automáticamente en checkAuthStatus
+    console.log('Funcionalidades de la aplicación habilitadas');
+}
+
+// Deshabilitar funcionalidades de la aplicación
+function disableAppFeatures() {
+    // Deshabilitar botones de la aplicación
+    const buttons = document.querySelectorAll('.btn-custom, .btn-success-custom, .btn-danger-custom');
+    buttons.forEach(button => {
+        button.disabled = true;
+    });
+    
+    // Limpiar datos
+    sucursales = [];
+    zonas = [];
+    renderSucursales();
+    renderZonas();
+    clearMap();
+}
+
+// Función de logout
+async function logout() {
+    try {
+        console.log('Cerrando sesión...');
+        
+        const response = await fetch('/auth/logout', {
+            credentials: 'include'
+        });
+        
+        if (response.ok) {
+            // Limpiar variables globales
+            isAuthenticated = false;
+            currentUser = null;
+            authCookie = null;
+            
+            // Volver a la pantalla de administración
+            resetAuthFlow();
+            
+            showAlert('Sesión cerrada exitosamente', 'info');
+        } else {
+            const data = await response.json();
+            throw new Error(data.error || 'Error al cerrar sesión');
+        }
+    } catch (error) {
+        console.error('Error cerrando sesión:', error);
+        showAlert('Error al cerrar sesión', 'danger');
+    }
+}
+
+// Verificar autenticación antes de realizar acciones protegidas
+function requireAuth(callback) {
+    if (isAuthenticated) {
+        callback();
+    } else {
+        showAuthModal();
+    }
+}
+
+// Mostrar modal de autenticación
+function showAuthModal() {
+    const modal = new bootstrap.Modal(document.getElementById('authModal'));
+    modal.show();
+}
+
+// Interceptar llamadas a la API para manejar errores de autenticación
+async function apiCall(url, options = {}) {
+    try {
+        console.log(`Realizando llamada a API: ${url}`);
+        const response = await fetchWithRateLimit(url, options);
+        
+        console.log(`Respuesta de API ${url}: ${response.status} ${response.statusText}`);
+        
+        // Si la respuesta es 401 (No autorizado), redirigir al login
+        if (response.status === 401) {
+            console.log('Error 401: Sesión expirada, redirigiendo al login');
+            isAuthenticated = false;
+            currentUser = null;
+            updateAuthUI(false);
+            showAuthModal();
+            throw new Error('Sesión expirada. Por favor, inicie sesión nuevamente.');
+        }
+        
+        // Si la respuesta es 403 (Prohibido), mostrar mensaje de permisos
+        if (response.status === 403) {
+            console.log('Error 403: Acceso denegado');
+            showAlert('No tiene permisos para realizar esta acción', 'warning');
+            throw new Error('Acceso denegado');
+        }
+        
+        return response;
+    } catch (error) {
+        console.error(`Error en llamada a API ${url}:`, error);
+        if (error.message.includes('Sesión expirada') || error.message.includes('Acceso denegado')) {
+            throw error;
+        }
+        throw new Error(`Error en la API: ${error.message}`);
+    }
+}
+
 // Inicializar aplicación
 document.addEventListener('DOMContentLoaded', function() {
+    console.log('=== INICIALIZANDO APLICACIÓN ===');
+    
+    // Verificar que los elementos HTML estén presentes
+    const adminScreen = document.getElementById('adminScreen');
+    const mainSystem = document.getElementById('mainSystem');
+    const loginSection = document.getElementById('loginSection');
+    
+    console.log('Elementos HTML encontrados:');
+    console.log('- adminScreen:', !!adminScreen);
+    console.log('- mainSystem:', !!mainSystem);
+    console.log('- loginSection:', !!loginSection);
+    
+    if (!adminScreen) {
+        console.error('ERROR: No se encontró el elemento adminScreen');
+        return;
+    }
+    
+    // Asegurar que la pantalla de administración esté visible inicialmente
+    adminScreen.style.display = 'block';
+    if (mainSystem) {
+        mainSystem.style.display = 'none';
+    }
+    
     // Inicializar sistema de rate limiting
     initializeRateLimiting();
     
-    initMap();
-    
-    // Event listener para Enter en consulta de dirección
-    document.getElementById('direccionConsulta').addEventListener('keypress', function(e) {
-        if (e.key === 'Enter') {
-            consultarDireccion();
-        }
+    // Verificar cookie de autenticación
+    checkAuthCookie().then(() => {
+        console.log('Verificación de cookie completada');
+    }).catch(error => {
+        console.error('Error verificando cookie de autenticación:', error);
     });
+    
+    // Event listener para Enter en consulta de dirección (solo cuando el sistema esté cargado)
+    const direccionInput = document.getElementById('direccionConsulta');
+    if (direccionInput) {
+        direccionInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                requireAuth(() => consultarDireccion());
+            }
+        });
+    }
+    
+    console.log('=== APLICACIÓN INICIALIZADA ===');
 });
 
 // Inicializar sistema de rate limiting

@@ -6,8 +6,6 @@
 from flask import Flask, request, jsonify, render_template
 # CORS: Permite que el navegador haga peticiones desde diferentes dominios
 from flask_cors import CORS
-# sqlite3: Base de datos SQLite integrada en Python (no necesita servidor separado)
-import sqlite3
 # json: Para manejar datos en formato JSON (JavaScript Object Notation)
 import json
 # requests: Para hacer peticiones HTTP a APIs externas
@@ -24,6 +22,8 @@ import logging
 from api_service import get_api_service
 # Importamos la configuración de la aplicación
 from config import config
+# Importamos el paquete de autenticación
+from auth import init_oauth, register_auth_routes, get_user_verification_service, login_required
 
 # =============================================================================
 # CONFIGURACIÓN INICIAL DE LA APLICACIÓN FLASK
@@ -33,9 +33,28 @@ from config import config
 # __name__ es una variable especial de Python que contiene el nombre del módulo actual
 app = Flask(__name__)
 
+# Configurar la aplicación con la configuración por defecto
+app.config.from_object(config['default'])
+
+# Configuración adicional para sesiones
+app.config['SESSION_COOKIE_SECURE'] = False  # Para desarrollo local
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+
 # Habilitar CORS (Cross-Origin Resource Sharing) para permitir peticiones desde el frontend
 # Esto es necesario cuando el frontend y backend están en diferentes puertos/dominios
-CORS(app)
+# Configurar CORS para permitir cookies de sesión
+CORS(app, supports_credentials=True)
+
+# =============================================================================
+# CONFIGURACIÓN DE AUTENTICACIÓN
+# =============================================================================
+
+# Inicializar OAuth para autenticación con Google (opcional en desarrollo)
+oauth = init_oauth(app)
+
+# Obtener el servicio de verificación de usuarios
+user_verification_service = get_user_verification_service()
 
 # =============================================================================
 # CONFIGURACIÓN DE LOGGING (REGISTRO DE EVENTOS)
@@ -47,13 +66,12 @@ logging.basicConfig(level=logging.INFO)
 # Crear un logger específico para este módulo
 logger = logging.getLogger(__name__)
 
-# =============================================================================
-# CONFIGURACIÓN DE BASE DE DATOS
-# =============================================================================
+# Registrar las rutas de autenticación solo si OAuth está configurado
+if oauth is not None:
+    register_auth_routes(app, oauth, user_verification_service)
+else:
+    logger.warning("OAuth no configurado - las rutas de autenticación no están disponibles")
 
-# Nombre del archivo de base de datos SQLite
-# SQLite es una base de datos ligera que se almacena en un archivo
-DATABASE = 'zonas_cobertura.db'
 
 # =============================================================================
 # FUNCIONES DE RATE LIMITING
@@ -84,89 +102,6 @@ def extract_rate_limit_headers(request):
     
     return rate_limit_headers
 
-# =============================================================================
-# FUNCIONES DE BASE DE DATOS
-# =============================================================================
-
-def init_db():
-    """
-    Inicializa la base de datos SQLite creando las tablas necesarias si no existen.
-    
-    Esta función se ejecuta al iniciar la aplicación y crea tres tablas principales:
-    1. sucursales: Almacena información de las sucursales (nombre, dirección, coordenadas)
-    2. zonas_cobertura: Almacena las zonas de cobertura dibujadas en el mapa
-    3. calles_cobertura: Almacena las calles y rangos de altura para cada zona
-    """
-    # Conectar a la base de datos SQLite
-    # Si el archivo no existe, SQLite lo crea automáticamente
-    conn = sqlite3.connect(DATABASE)
-    # Crear un cursor para ejecutar comandos SQL
-    cursor = conn.cursor()
-    
-    # =====================================================================
-    # TABLA DE SUCURSALES
-    # =====================================================================
-    # Almacena información básica de cada sucursal
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS sucursales (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,  -- ID único autoincremental
-            nombre TEXT NOT NULL,                  -- Nombre de la sucursal
-            direccion TEXT NOT NULL,               -- Dirección completa
-            latitud REAL NOT NULL,                 -- Coordenada de latitud (Y)
-            longitud REAL NOT NULL,                -- Coordenada de longitud (X)
-            activa BOOLEAN DEFAULT 1               -- Si la sucursal está activa (1=si, 0=no)
-        )
-    ''')
-    
-    # =====================================================================
-    # TABLA DE ZONAS DE COBERTURA
-    # =====================================================================
-    # Almacena las zonas dibujadas en el mapa para cada sucursal
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS zonas_cobertura (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,  -- ID único autoincremental
-            sucursal_id INTEGER NOT NULL,          -- ID de la sucursal a la que pertenece
-            nombre_zona TEXT NOT NULL,             -- Nombre descriptivo de la zona
-            poligono_coordenadas TEXT NOT NULL,    -- Coordenadas del polígono en formato JSON
-            fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,  -- Cuándo se creó
-            activa BOOLEAN DEFAULT 1,              -- Si la zona está activa
-            FOREIGN KEY (sucursal_id) REFERENCES sucursales (id)  -- Relación con sucursales
-        )
-    ''')
-    
-    # =====================================================================
-    # TABLA DE CALLES EN ZONAS DE COBERTURA
-    # =====================================================================
-    # Almacena las calles y rangos de altura para cada zona
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS calles_cobertura (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,  -- ID único autoincremental
-            zona_id INTEGER NOT NULL,              -- ID de la zona a la que pertenece
-            nombre_calle TEXT NOT NULL,            -- Nombre de la calle
-            altura_desde INTEGER NOT NULL,         -- Altura mínima de la calle
-            altura_hasta INTEGER NOT NULL,         -- Altura máxima de la calle
-            FOREIGN KEY (zona_id) REFERENCES zonas_cobertura (id)  -- Relación con zonas
-        )
-    ''')
-    
-    # Confirmar los cambios en la base de datos
-    conn.commit()
-    # Cerrar la conexión para liberar recursos
-    conn.close()
-
-def get_db_connection():
-    """
-    Obtiene una conexión a la base de datos SQLite.
-    
-    Returns:
-        sqlite3.Connection: Conexión configurada para devolver filas como diccionarios
-    """
-    # Conectar a la base de datos
-    conn = sqlite3.connect(DATABASE)
-    # Configurar para que las filas se devuelvan como diccionarios
-    # Esto permite acceder a los datos por nombre de columna: row['nombre']
-    conn.row_factory = sqlite3.Row
-    return conn
 
 # =============================================================================
 # RUTAS DE LA APLICACIÓN WEB (ENDPOINTS)
@@ -187,11 +122,23 @@ def index():
     # y lo procesa con el motor de templates de Flask (Jinja2)
     return render_template('index.html')
 
+@app.route('/test')
+def test_auth():
+    """
+    Ruta de prueba para el sistema de autenticación.
+    
+    Returns:
+        str: HTML del archivo de prueba
+    """
+    with open('test_auth.html', 'r', encoding='utf-8') as f:
+        return f.read()
+
 # =============================================================================
 # RUTAS DE LA API - SUCURSALES
 # =============================================================================
 
 @app.route('/api/sucursales', methods=['GET'])
+@login_required
 def get_sucursales():
     """
     Obtiene todas las sucursales desde la API externa.
@@ -219,77 +166,14 @@ def get_sucursales():
         # Devolver un error HTTP 500 (Error interno del servidor) con mensaje
         return jsonify({'error': 'Error al obtener sucursales desde la API externa'}), 500
 
-@app.route('/api/sucursales', methods=['POST'])
-def create_sucursal():
-    """
-    Crea una nueva sucursal en la base de datos local.
-    
-    Esta ruta recibe los datos de una nueva sucursal (nombre, dirección, coordenadas)
-    y la guarda en la base de datos SQLite local.
-    
-    Returns:
-        JSON: ID de la sucursal creada y mensaje de confirmación
-    """
-    # Obtener los datos JSON enviados en el cuerpo de la petición
-    data = request.get_json()
-    
-    # Conectar a la base de datos
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    # Insertar la nueva sucursal en la tabla 'sucursales'
-    # Los ? son placeholders que se reemplazan con los valores de la tupla
-    cursor.execute('''
-        INSERT INTO sucursales (nombre, direccion, latitud, longitud)
-        VALUES (?, ?, ?, ?)
-    ''', (data['nombre'], data['direccion'], data['latitud'], data['longitud']))
-    
-    # Obtener el ID de la sucursal recién creada
-    sucursal_id = cursor.lastrowid
-    
-    # Confirmar los cambios en la base de datos
-    conn.commit()
-    # Cerrar la conexión
-    conn.close()
-    
-    # Devolver respuesta exitosa con el ID de la sucursal creada
-    return jsonify({'id': sucursal_id, 'message': 'Sucursal creada exitosamente'})
 
 # =============================================================================
 # RUTAS DE LA API - ZONAS DE COBERTURA
 # =============================================================================
 
-@app.route('/api/zonas', methods=['GET'])
-def get_zonas():
-    """
-    Obtiene todas las zonas de cobertura desde la base de datos local.
-    
-    Esta ruta consulta la base de datos SQLite local para obtener todas las zonas
-    de cobertura activas, incluyendo el nombre de la sucursal a la que pertenecen.
-    
-    Returns:
-        JSON: Lista de zonas de cobertura con información de sucursales
-    """
-    # Conectar a la base de datos
-    conn = get_db_connection()
-    
-    # Consulta SQL que une las tablas 'zonas_cobertura' y 'sucursales'
-    # para obtener el nombre de la sucursal junto con los datos de la zona
-    zonas = conn.execute('''
-        SELECT z.*, s.nombre as sucursal_nombre 
-        FROM zonas_cobertura z
-        JOIN sucursales s ON z.sucursal_id = s.id
-        WHERE z.activa = 1
-    ''').fetchall()
-    
-    # Cerrar la conexión
-    conn.close()
-    
-    # Convertir cada fila (que es un objeto Row) a un diccionario
-    # y devolver la lista como JSON
-    return jsonify([dict(zona) for zona in zonas])
 
 @app.route('/api/zonas/<int:sucursal_id>', methods=['GET'])
+@login_required
 def get_zonas_sucursal(sucursal_id):
     """
     Obtiene las zonas de cobertura para una sucursal específica desde la API externa.
@@ -320,46 +204,13 @@ def get_zonas_sucursal(sucursal_id):
         # Devolver error HTTP 500 con mensaje descriptivo
         return jsonify({'error': f'Error al obtener zonas de cobertura para la sucursal {sucursal_id}'}), 500
 
-@app.route('/api/zonas', methods=['POST'])
-def create_zona():
-    """
-    Crea una nueva zona de cobertura en la base de datos local.
-    
-    Esta ruta recibe los datos de una nueva zona de cobertura (sucursal_id,
-    nombre_zona, polígono_coordenadas) y la guarda en la base de datos SQLite.
-    
-    Returns:
-        JSON: ID de la zona creada y mensaje de confirmación
-    """
-    # Obtener los datos JSON enviados en el cuerpo de la petición
-    data = request.get_json()
-    
-    # Conectar a la base de datos
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    # Insertar la nueva zona en la tabla 'zonas_cobertura'
-    # json.dumps() convierte la lista de coordenadas a una cadena JSON
-    cursor.execute('''
-        INSERT INTO zonas_cobertura (sucursal_id, nombre_zona, poligono_coordenadas)
-        VALUES (?, ?, ?)
-    ''', (data['sucursal_id'], data['nombre_zona'], json.dumps(data['poligono_coordenadas'])))
-    
-    # Obtener el ID de la zona recién creada
-    zona_id = cursor.lastrowid
-    
-    # Confirmar los cambios y cerrar la conexión
-    conn.commit()
-    conn.close()
-    
-    # Devolver respuesta exitosa
-    return jsonify({'id': zona_id, 'message': 'Zona creada exitosamente'})
 
 # =============================================================================
 # RUTAS DE LA API - GEOCODIFICACIÓN
 # =============================================================================
 
 @app.route('/api/geocodificar', methods=['POST'])
+@login_required
 def geocodificar_direccion():
     """
     Geocodifica una dirección y obtiene sus coordenadas geográficas.
@@ -407,106 +258,72 @@ def geocodificar_direccion():
 # RUTAS DE LA API - CONSULTA DE COBERTURA
 # =============================================================================
 
-@app.route('/api/consultar-cobertura', methods=['POST'])
-def consultar_cobertura():
+
+
+# =============================================================================
+# RUTAS DE LA API - PROXY PARA API EXTERNA
+# =============================================================================
+
+@app.route('/internalapi/VerificarUsuarioAdmin', methods=['GET'])
+@login_required
+def proxy_verificar_usuario_admin():
     """
-    Consulta si una dirección está dentro de alguna zona de cobertura.
+    Proxy para el endpoint VerificarUsuarioAdmin de la API externa.
     
-    Esta es una de las funciones más importantes de la aplicación. Realiza los siguientes pasos:
-    1. Geocodifica la dirección para obtener coordenadas
-    2. Busca todas las zonas de cobertura activas en la base de datos
-    3. Verifica si las coordenadas están dentro de algún polígono de zona
-    4. Devuelve información sobre las zonas que cubren esa dirección
+    Esta ruta actúa como proxy para el endpoint /internalapi/VerificarUsuarioAdmin
+    de la API externa, asegurando que los headers de rate limiting se envíen correctamente.
+    
+    Query Parameters:
+        email (str): Email del usuario a verificar
     
     Returns:
-        JSON: Información sobre la dirección y las zonas que la cubren
+        JSON: Resultado de la verificación del usuario
         En caso de error: JSON con mensaje de error y código correspondiente
     """
-    # Obtener los datos JSON de la petición
-    data = request.get_json()
-    direccion = data.get('direccion')
-    
-    # Validar que se haya proporcionado una dirección
-    if not direccion:
-        return jsonify({'error': 'Dirección requerida'}), 400
-    
     try:
-        # =====================================================================
-        # PASO 1: GEOCODIFICAR LA DIRECCIÓN
-        # =====================================================================
-        # Crear geocodificador y convertir dirección a coordenadas
-        geolocator = Nominatim(user_agent="zonas_cobertura_app")
-        location = geolocator.geocode(direccion)
+        # Obtener el email del query parameter
+        email = request.args.get('email')
         
-        # Si no se pudo encontrar la dirección, devolver error
-        if not location:
-            return jsonify({'error': 'No se pudo encontrar la dirección'}), 404
+        if not email:
+            return jsonify({'error': 'Parámetro email requerido'}), 400
         
-        # =====================================================================
-        # PASO 2: CREAR PUNTO GEOMÉTRICO
-        # =====================================================================
-        # Crear un punto geométrico con las coordenadas encontradas
-        # Nota: Point(longitud, latitud) - el orden es importante
-        punto = Point(location.longitude, location.latitude)
+        logger.info(f"Proxy: Verificando usuario admin: {email}")
         
-        # =====================================================================
-        # PASO 3: BUSCAR ZONAS DE COBERTURA
-        # =====================================================================
-        # Conectar a la base de datos y obtener todas las zonas activas
-        conn = get_db_connection()
-        zonas = conn.execute('''
-            SELECT z.*, s.nombre as sucursal_nombre 
-            FROM zonas_cobertura z
-            JOIN sucursales s ON z.sucursal_id = s.id
-            WHERE z.activa = 1
-        ''').fetchall()
+        # Extraer headers de rate limiting de la petición entrante
+        rate_limit_headers = extract_rate_limit_headers(request)
         
-        # =====================================================================
-        # PASO 4: VERIFICAR SI EL PUNTO ESTÁ EN ALGUNA ZONA
-        # =====================================================================
-        zonas_encontradas = []
-        for zona in zonas:
-            # Convertir las coordenadas JSON a una lista de coordenadas
-            coordenadas = json.loads(zona['poligono_coordenadas'])
-            # Crear un polígono con esas coordenadas
-            poligono = Polygon(coordenadas)
+        # Verificar usuario contra la API externa usando el servicio
+        verification_result = user_verification_service.verify_user(email, rate_limit_headers)
+        
+        if verification_result['registered']:
+            logger.info(f"Proxy: Usuario verificado exitosamente: {email}")
+            return jsonify({
+                'registered': True,
+                'user_data': verification_result['user_data']
+            })
+        else:
+            logger.info(f"Proxy: Usuario no registrado: {email}")
+            return jsonify({
+                'registered': False,
+                'error': 'Usuario no registrado en el sistema'
+            }), 404
             
-            # Verificar si el punto está dentro del polígono
-            if poligono.contains(punto):
-                # Si está dentro, agregar información de la zona
-                zonas_encontradas.append({
-                    'zona_id': zona['id'],
-                    'nombre_zona': zona['nombre_zona'],
-                    'sucursal_nombre': zona['sucursal_nombre'],
-                    'sucursal_id': zona['sucursal_id']
-                })
-        
-        # Cerrar la conexión a la base de datos
-        conn.close()
-        
-        # =====================================================================
-        # PASO 5: DEVOLVER RESULTADO
-        # =====================================================================
+    except requests.RequestException as e:
+        logger.error(f"Proxy: Error conectando con API externa: {str(e)}")
         return jsonify({
-            'direccion': location.address,                    # Dirección completa encontrada
-            'coordenadas': {                                  # Coordenadas de la dirección
-                'latitud': location.latitude,
-                'longitud': location.longitude
-            },
-            'en_zona_cobertura': len(zonas_encontradas) > 0,  # True si está en alguna zona
-            'zonas': zonas_encontradas                        # Lista de zonas que cubren la dirección
-        })
+            'error': 'Error de conexión con el sistema de verificación'
+        }), 500
         
     except Exception as e:
-        # Si hay algún error durante el proceso, devolverlo
-        return jsonify({'error': str(e)}), 500
-
+        logger.error(f"Proxy: Error verificando usuario: {str(e)}")
+        return jsonify({'error': 'Error interno del servidor'}), 500
 
 # =============================================================================
 # RUTAS DE LA API - GUARDADO EN API EXTERNA
 # =============================================================================
 
 @app.route('/api/guardar-zona', methods=['POST'])
+@login_required
 def guardar_zona():
     """
     Guarda una zona de cobertura en la API externa.
@@ -558,6 +375,7 @@ def guardar_zona():
         return jsonify({'error': 'Error al guardar zona de cobertura en la API externa'}), 500
 
 @app.route('/api/eliminar-zona', methods=['DELETE'])
+@login_required
 def eliminar_zona():
     """
     Elimina una zona de cobertura de la API externa.
@@ -620,12 +438,8 @@ if __name__ == '__main__':
     Punto de entrada principal de la aplicación.
     
     Esta sección se ejecuta solo cuando el archivo se ejecuta directamente
-    (no cuando se importa como módulo). Inicializa la base de datos
-    y arranca el servidor Flask.
+    (no cuando se importa como módulo). Arranca el servidor Flask.
     """
-    # Inicializar la base de datos (crear tablas si no existen)
-    init_db()
-    
     # Iniciar el servidor Flask
     app.run(
         debug=True,        # Modo debug activado (recarga automática en cambios)
