@@ -23,7 +23,7 @@ from api_service import get_api_service
 # Importamos la configuración de la aplicación
 from config import config
 # Importamos el paquete de autenticación
-from auth import init_oauth, register_auth_routes, get_user_verification_service, login_required
+from auth import init_oauth, register_auth_routes, get_user_verification_service, login_required, register_verify_user_route
 
 # =============================================================================
 # CONFIGURACIÓN INICIAL DE LA APLICACIÓN FLASK
@@ -66,11 +66,14 @@ logging.basicConfig(level=logging.INFO)
 # Crear un logger específico para este módulo
 logger = logging.getLogger(__name__)
 
+# Registrar la ruta de verificación de usuarios (siempre disponible)
+register_verify_user_route(app, user_verification_service)
+
 # Registrar las rutas de autenticación solo si OAuth está configurado
 if oauth is not None:
     register_auth_routes(app, oauth, user_verification_service)
 else:
-    logger.warning("OAuth no configurado - las rutas de autenticación no están disponibles")
+    logger.warning("OAuth no configurado - las rutas de autenticación OAuth no están disponibles")
 
 
 # =============================================================================

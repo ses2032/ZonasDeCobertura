@@ -34,7 +34,8 @@ from .auth import (
     logout_user,
     
     # Registro de rutas
-    register_auth_routes
+    register_auth_routes,
+    register_verify_user_route
 )
 
 # =============================================================================
@@ -56,7 +57,8 @@ __all__ = [
     'logout_user',
     
     # Registro de rutas
-    'register_auth_routes'
+    'register_auth_routes',
+    'register_verify_user_route'
 ]
 
 # =============================================================================

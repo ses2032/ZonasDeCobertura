@@ -162,17 +162,46 @@ class UserVerificationService:
             
             logger.info(f"Respuesta de API externa: {response.status_code}")
             logger.info(f"Headers de respuesta: {dict(response.headers)}")
+            
+            # Loggear el contenido de la respuesta antes de procesarla
+            response_text = response.text
+            logger.info(f"Contenido de respuesta (raw): {response_text}")
+            logger.info(f"Tipo de contenido: {response.headers.get('content-type', 'No especificado')}")
             logger.info("=== FIN PETICIÓN A API EXTERNA ===")
             
-                                                
             # Si la respuesta es exitosa (200-299), el usuario está registrado
             if response.status_code == 200:
-                user_data = response.json()
-                logger.info(f"Usuario verificado exitosamente: {email}")
-                return {
-                    'registered': True,
-                    'user_data': user_data
-                }
+                try:
+                    # Intentar parsear como JSON
+                    user_data = response.json()
+                    logger.info(f"Respuesta parseada como JSON: {user_data}")
+                    logger.info(f"Tipo de datos parseados: {type(user_data)}")
+                    
+                    # Si la respuesta es un array, tomar el primer elemento
+                    if isinstance(user_data, list):
+                        logger.info(f"Respuesta es un array con {len(user_data)} elementos")
+                        if len(user_data) > 0:
+                            user_data = user_data[0]
+                            logger.info(f"Tomando primer elemento del array: {user_data}")
+                        else:
+                            logger.warning("Array vacío recibido")
+                            user_data = None
+                    
+                    logger.info(f"Usuario verificado exitosamente: {email}")
+                    return {
+                        'registered': True,
+                        'user_data': user_data
+                    }
+                    
+                except ValueError as e:
+                    logger.error(f"Error parseando JSON de respuesta: {str(e)}")
+                    logger.error(f"Respuesta no es JSON válido: {response_text}")
+                    # Si no es JSON válido, tratar como string
+                    logger.info("Tratando respuesta como string")
+                    return {
+                        'registered': True,
+                        'user_data': {'message': response_text.strip()}
+                    }
             
             # Si la respuesta es 404, el usuario no está registrado
             elif response.status_code == 404:
@@ -369,15 +398,82 @@ def logout_user():
 # RUTAS DE AUTENTICACIÓN
 # =============================================================================
 
+def register_verify_user_route(app: Flask, user_verification_service: UserVerificationService):
+    """
+    Registra únicamente la ruta de verificación de usuarios.
+    
+    Esta función registra la ruta /auth/verify-user que es independiente de OAuth
+    y siempre debe estar disponible, incluso si OAuth no está configurado.
+    
+    Args:
+        app (Flask): Instancia de la aplicación Flask
+        user_verification_service (UserVerificationService): Servicio de verificación de usuarios
+    """
+    
+    @app.route('/auth/verify-user', methods=['GET'])
+    def verify_user():
+        """
+        Verifica si un usuario está registrado en la API externa.
+        
+        Query Parameters:
+            email (str): Email del usuario a verificar
+        
+        Returns:
+            JSON con resultado de la verificación
+        """
+        try:
+            email = request.args.get('email')
+            
+            if not email:
+                return jsonify({'error': 'Parámetro email requerido'}), 400
+            
+            logger.info(f"Verificando usuario: {email}")
+            
+            # Verificar usuario contra la API externa
+            try:
+                # Extraer headers de rate limiting de la petición entrante
+                rate_limit_headers = extract_rate_limit_headers(request)
+                verification_result = user_verification_service.verify_user(email, rate_limit_headers)
+                
+                if verification_result['registered']:
+                    logger.info(f"Usuario verificado exitosamente: {email}")
+                    return jsonify({
+                        'verified': True,
+                        'user_data': verification_result['user_data']
+                    })
+                else:
+                    logger.info(f"Usuario no registrado: {email}")
+                    return jsonify({
+                        'verified': False,
+                        'error': 'Usuario no registrado en el sistema'
+                    }), 404
+                    
+            except requests.RequestException as e:
+                logger.error(f"Error conectando con API externa: {str(e)}")
+                return jsonify({
+                    'verified': False,
+                    'error': 'Error de conexión con el sistema de verificación'
+                }), 500
+                
+        except Exception as e:
+            logger.error(f"Error verificando usuario: {str(e)}")
+            return jsonify({'error': 'Error interno del servidor'}), 500
+
+
 def register_auth_routes(app: Flask, oauth: OAuth, user_verification_service: UserVerificationService):
     """
     Registra las rutas de autenticación en la aplicación Flask.
     
     Args:
         app (Flask): Instancia de la aplicación Flask
-        oauth (OAuth): Instancia configurada de OAuth
+        oauth (OAuth): Instancia configurada de OAuth (puede ser None)
         user_verification_service (UserVerificationService): Servicio de verificación de usuarios
     """
+    
+    # Si OAuth no está configurado, solo registrar rutas básicas
+    if oauth is None:
+        logger.warning("OAuth no configurado - registrando solo rutas básicas")
+        return
     
     @app.route('/auth/login')
     def login():
@@ -592,55 +688,6 @@ def register_auth_routes(app: Flask, oauth: OAuth, user_verification_service: Us
         except Exception as e:
             logger.error(f"Error verificando cookie: {str(e)}")
             return jsonify({'hasValidCookie': False})
-    
-    @app.route('/auth/verify-user', methods=['GET'])
-    def verify_user():
-        """
-        Verifica si un usuario está registrado en la API externa.
-        
-        Query Parameters:
-            email (str): Email del usuario a verificar
-        
-        Returns:
-            JSON con resultado de la verificación
-        """
-        try:
-            email = request.args.get('email')
-            
-            if not email:
-                return jsonify({'error': 'Parámetro email requerido'}), 400
-            
-            logger.info(f"Verificando usuario: {email}")
-            
-            # Verificar usuario contra la API externa
-            try:
-                # Extraer headers de rate limiting de la petición entrante
-                rate_limit_headers = extract_rate_limit_headers(request)
-                verification_result = user_verification_service.verify_user(email, rate_limit_headers)
-                
-                if verification_result['registered']:
-                    logger.info(f"Usuario verificado exitosamente: {email}")
-                    return jsonify({
-                        'verified': True,
-                        'user_data': verification_result['user_data']
-                    })
-                else:
-                    logger.info(f"Usuario no registrado: {email}")
-                    return jsonify({
-                        'verified': False,
-                        'error': 'Usuario no registrado en el sistema'
-                    }), 404
-                    
-            except requests.RequestException as e:
-                logger.error(f"Error conectando con API externa: {str(e)}")
-                return jsonify({
-                    'verified': False,
-                    'error': 'Error de conexión con el sistema de verificación'
-                }), 500
-                
-        except Exception as e:
-            logger.error(f"Error verificando usuario: {str(e)}")
-            return jsonify({'error': 'Error interno del servidor'}), 500
     
 
 # =============================================================================
